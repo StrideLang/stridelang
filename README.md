@@ -1,0 +1,145 @@
+# Stride Language (`stridelang`)
+
+The official Ahead-Of-Time (AOT) compiler, runtime toolchain, and build system integration for the Stride programming language.
+
+---
+
+## Overview
+
+`stridelang` provides the `stridec` compiler binary and first-class build system modules for integrating Stride DSP, state machines, and dataflow streams directly into C and C++ projects — targeting both host environments and bare-metal embedded microcontrollers.
+
+---
+
+## Features
+
+- **Ahead-Of-Time (AOT) Native Compilation**: Compiles `.stride` source files into native machine object files (`.o`).
+- **C99/C++ API Generation**: Automatically emits clean C header files (`.h`) declaring `<Domain>_init(void)` and `<Domain>_process(...)`.
+- **Target Architectures & MCUs**:
+  - **Raspberry Pi Pico / RP2040 / RP2350** (`thumbv6m-none-eabi`, `thumbv8m.main-none-eabi`)
+  - **STM32** (ARM Cortex-M0+, Cortex-M3, Cortex-M4, Cortex-M7, Cortex-M33)
+  - **Renesas** (RA Cortex-M, RX)
+  - **WebAssembly** (`wasm32-unknown-wasi`)
+  - **Host Architectures** (x86_64, AArch64)
+- **Modern CMake Integration**: Drop-in `find_package(Stride)` and `stride_target_sources()` support.
+
+---
+
+## CLI Usage (`stridec`)
+
+```text
+Usage: stridec [options] <input.stride>
+
+Target & Architecture Selection:
+  --target=<triple>, -target <triple>   Set LLVM target triple (e.g. thumbv6m-none-eabi, arm-none-eabi)
+  -mcpu=<cpu>, -mcpu <cpu>             Set target CPU (e.g. cortex-m0plus, cortex-m4, cortex-m7)
+  -march=<arch>                        Set target architecture
+  -mfloat-abi=<abi>                    Floating-point ABI: soft, softfp, hard
+  -mfpu=<fpu>                          Target FPU
+
+Code Generation & Relocation Options:
+  -fPIC, -fno-PIC                      Generate position-independent code
+  -fropi, -frwpi                       Read-only / read-write position independence
+  -mcmodel=<model>                     Code model: tiny, small, kernel, medium, large
+  -O0, -O1, -O2, -O3, -Os, -Oz         Optimization level
+  -c                                   Compile to object file (do not link)
+
+Output & Header Options:
+  -o <file>                            Output object file (.o)
+  --emit-header=<file>, --header-out   Output C interface header file (.h)
+  --domain=<name>, -domain <name>      Specific domain to generate header for
+
+Include & Path Options:
+  -I <dir>, -I<dir>                    Add directory to .stride include search path
+  -isystem <dir>                       Add system include directory
+  --strideroot=<dir>                   Custom Stride root directory
+
+Driver Options:
+  -v, --verbose                        Enable verbose output
+  -h, --help                           Display this help message
+  --version                            Display compiler version
+```
+
+---
+
+## CMake Integration
+
+```cmake
+find_package(Stride REQUIRED)
+
+add_executable(my_firmware
+    src/main.c
+)
+
+# Compiles sensor_dsp.stride into the target MCU object file and exposes sensor_dsp.h
+stride_target_sources(my_firmware PRIVATE
+    stride/sensor_dsp.stride
+)
+```
+
+---
+
+## Building `stridelang`
+
+`stridelang` links against the `stridejit` runtime and LLVM libraries. You can build it either by compiling dependencies from source or by pointing to an existing prebuilt build directory for instantaneous builds.
+
+### 1. Fast Build Using Prebuilt Binaries & Headers (Recommended)
+
+To avoid rebuilding `stridejit` and LLVM, supply the path to your existing build output directory where `StrideJit.lib`, `StrideParser.lib`, `StrideUtils.lib`, and LLVM libraries reside:
+
+```powershell
+# Point to your existing stridejit or boardgame build directory
+cmake -B build -DSTRIDE_PREBUILT_BUILD_DIR="C:/path/to/boardgame/build/Desktop_Qt_6_7_3_MSVC2022_64bit-Debug" -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --config Debug
+```
+
+#### CMake Options for Prebuilt Dependencies:
+
+| CMake Option | Description |
+| :--- | :--- |
+| `-DSTRIDE_PREBUILT_BUILD_DIR=<path>` | Path to an existing build directory containing compiled Stride (`StrideJit`, `StrideParser`, `StrideUtils`, `StrideCodegen`) and LLVM static libraries. |
+| `-DSTRIDE_SRC_DIR=<path>` | (Optional) Path to the root `stridejit` source repository containing `include/stride/` headers (defaults to `../stridejit` or `../../external/stridejit`). |
+| `-DSTRIDE_USE_SYSTEM_DEPS=ON` | Prefer finding an already installed `StrideJit` package via `find_package(StrideJit)`. |
+
+> [!NOTE]
+> **Automatic Discovery**: If `STRIDE_PREBUILT_BUILD_DIR` is not specified, CMake will automatically scan sibling build directories (e.g. `../../build/*`, `../build/*`, `build/`) for existing prebuilt `StrideJit` and LLVM binaries.
+
+### 2. Building from Source
+
+If no prebuilt binaries are found and `STRIDE_PREBUILT_BUILD_DIR` is not set, CMake will automatically pull in and compile `stridejit` and its dependencies from source:
+
+```powershell
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+```
+
+---
+
+## Building the Installer & Toolchain Packages
+
+### On Windows (NSIS `.exe` Installer & `.zip` Portable Archive):
+
+You can build installers using the PowerShell script with prebuilt dependencies:
+
+```powershell
+# Fast installer build with existing prebuilt binaries:
+.\scripts\build_installer.ps1 -PrebuiltBuildDir "C:/path/to/boardgame/build/Desktop_Qt_6_7_3_MSVC2022_64bit-Debug" -Config Debug
+
+# Standard release installer build:
+.\scripts\build_installer.ps1 -Config Release
+
+# Or manually via CMake / CPack:
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+cpack --config build/CPackConfig.cmake -C Release
+```
+
+The Windows NSIS installer automatically configures the system `PATH` so `stridec` and `find_package(Stride)` work out of the box in any terminal or IDE.
+
+### On Linux / macOS (`.tar.gz`, `.deb`, `.rpm`):
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+cpack --config build/CPackConfig.cmake -C Release
+```
+
