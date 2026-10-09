@@ -32,7 +32,7 @@ bool parseOptionWithVal(const std::string &arg, size_t &i,
 
 void printHelp(std::ostream &os, const char *progName) {
   os << "Stride Compiler (stridec) - Clang-compatible AOT Driver\n\n"
-     << "Usage: " << progName << " [options] <input.stride>\n\n"
+     << "Usage: " << progName << " [options] <input1.stride> [input2.stride ...]\n\n"
      << "Target & Architecture Selection:\n"
      << "  --target=<triple>, -target <triple>   Set LLVM target triple (e.g. thumbv6m-none-eabi, arm-none-eabi)\n"
      << "  -mcpu=<cpu>, -mcpu <cpu>             Set target CPU (e.g. cortex-m0plus, cortex-m4, cortex-m7)\n"
@@ -43,10 +43,12 @@ void printHelp(std::ostream &os, const char *progName) {
      << "  -fPIC, -fno-PIC                      Generate position-independent code\n"
      << "  -fropi, -frwpi                       Read-only / read-write position independence\n"
      << "  -mcmodel=<model>                     Code model: tiny, small, kernel, medium, large\n"
+     << "  -femit-all-functions,                Force code generation for all root-level functions\n"
+     << "  --emit-all-functions, --compile-functions\n"
      << "  -O0, -O1, -O2, -O3, -Os, -Oz         Optimization level\n"
      << "  -c                                   Compile to object file (do not link)\n\n"
      << "Output & Header Options:\n"
-     << "  -o <file>                            Output object file (.o)\n"
+     << "  -o <file>                            Output object file (.o / .obj)\n"
      << "  --emit-header=<file>, --header-out   Output C interface header file (.h)\n"
      << "  --domain=<name>, -domain <name>      Specific domain to generate header for\n\n"
      << "Include & Path Options:\n"
@@ -59,6 +61,7 @@ void printHelp(std::ostream &os, const char *progName) {
      << "  --version                            Display compiler version\n\n"
      << "Examples:\n"
      << "  " << progName << " -c sensor.stride -o sensor.o --emit-header=sensor.h\n"
+     << "  " << progName << " -c math.stride filters.stride -o dsp.o --emit-header=dsp.h --emit-all-functions\n"
      << "  " << progName << " -c dsp.stride --target=thumbv6m-none-eabi -mcpu=cortex-m0plus -o dsp.o --emit-header=dsp.h\n";
 }
 
@@ -97,6 +100,9 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
       opts.relocModel = "rwpi";
     } else if (arg == "-fropi-rwpi") {
       opts.relocModel = "ropi-rwpi";
+    } else if (arg == "-femit-all-functions" || arg == "--emit-all-functions" ||
+               arg == "-compile-functions" || arg == "--compile-functions") {
+      opts.emitAllFunctions = true;
     } else if (arg.rfind("-O", 0) == 0) {
       continue;
     } else if (parseOptionWithVal(arg, i, args, "-o", opts.outputFile)) {
@@ -145,13 +151,7 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
       errorMessage = "unknown command-line option '" + arg + "'";
       return false;
     } else {
-      if (opts.inputFile.empty()) {
-        opts.inputFile = arg;
-      } else {
-        errorMessage = "error: multiple input files specified: '" + opts.inputFile +
-                       "' and '" + arg + "'";
-        return false;
-      }
+      opts.inputFiles.push_back(arg);
     }
   }
 
@@ -179,7 +179,7 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
     return 0;
   }
 
-  if (opts.inputFile.empty()) {
+  if (opts.inputFiles.empty()) {
     err << "stridec: error: no input files\n";
     return 1;
   }
@@ -189,9 +189,11 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
     return 1;
   }
 
-  if (!std::filesystem::exists(opts.inputFile)) {
-    err << "stridec: error: no such file or directory: '" << opts.inputFile << "'\n";
-    return 1;
+  for (const auto &inputFile : opts.inputFiles) {
+    if (!std::filesystem::exists(inputFile)) {
+      err << "stridec: error: no such file or directory: '" << inputFile << "'\n";
+      return 1;
+    }
   }
 
   strd::StrideEnvironment env(opts.strideRoot);
@@ -200,18 +202,24 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
   }
 
   if (opts.verbose) {
-    out << "Compiling: " << opts.inputFile << "\n";
+    out << "Compiling " << opts.inputFiles.size() << " Stride file(s):\n";
+    for (const auto &inputFile : opts.inputFiles) {
+      out << "  " << inputFile << "\n";
+    }
     if (!opts.targetTriple.empty()) {
       out << "Target Triple: " << opts.targetTriple << "\n";
     }
     if (!opts.targetCPU.empty()) {
       out << "Target CPU: " << opts.targetCPU << "\n";
     }
+    if (opts.emitAllFunctions) {
+      out << "Emit All Functions: enabled\n";
+    }
   }
 
-  bool ok = env.generateIr(opts.inputFile);
+  bool ok = env.generateIr(opts.inputFiles, opts.emitAllFunctions);
   if (!ok) {
-    err << "stridec: error: compilation failed for '" << opts.inputFile << "'\n";
+    err << "stridec: error: compilation failed\n";
     return 1;
   }
 

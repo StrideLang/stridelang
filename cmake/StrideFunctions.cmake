@@ -63,32 +63,33 @@ function(stride_target_sources TARGET VISIBILITY)
         list(APPEND COMPILER_ARGS "-mcmodel=${STRIDE_CODE_MODEL}")
     endif()
 
-    set(GENERATED_OBJECTS "")
+    if(STRIDE_EMIT_ALL_FUNCTIONS)
+        list(APPEND COMPILER_ARGS "--emit-all-functions")
+    endif()
 
+    set(SRC_PATHS "")
     foreach(STRIDE_SRC IN LISTS ARGN)
-        get_filename_component(FILE_NAME "${STRIDE_SRC}" NAME_WE)
         get_filename_component(SRC_PATH "${STRIDE_SRC}" ABSOLUTE)
-
-        set(OUT_OBJ "${GEN_DIR}/${FILE_NAME}${OBJ_EXT}")
-        set(OUT_HDR "${GEN_INC_DIR}/${FILE_NAME}.h")
-
-        add_custom_command(
-            OUTPUT "${OUT_OBJ}" "${OUT_HDR}"
-            COMMAND ${STRIDE_COMPILER_CMD}
-                    -c "${SRC_PATH}"
-                    -o "${OUT_OBJ}"
-                    --emit-header="${OUT_HDR}"
-                    ${COMPILER_ARGS}
-            DEPENDS "${SRC_PATH}" ${STRIDE_COMPILER_DEP}
-            COMMENT "Compiling Stride source ${STRIDE_SRC} -> ${FILE_NAME}${OBJ_EXT} / ${FILE_NAME}.h"
-            VERBATIM
-        )
-
-        list(APPEND GENERATED_OBJECTS "${OUT_OBJ}")
+        list(APPEND SRC_PATHS "${SRC_PATH}")
     endforeach()
 
-    # Link generated object files directly and expose generated header directory
-    target_sources(${TARGET} ${VISIBILITY} ${GENERATED_OBJECTS})
+    set(OUT_OBJ "${GEN_DIR}/${TARGET}${OBJ_EXT}")
+    set(OUT_HDR "${GEN_INC_DIR}/${TARGET}.h")
+
+    add_custom_command(
+        OUTPUT "${OUT_OBJ}" "${OUT_HDR}"
+        COMMAND ${STRIDE_COMPILER_CMD}
+                -c ${SRC_PATHS}
+                -o "${OUT_OBJ}"
+                --emit-header="${OUT_HDR}"
+                ${COMPILER_ARGS}
+        DEPENDS ${SRC_PATHS} ${STRIDE_COMPILER_DEP}
+        COMMENT "Compiling Stride sources -> ${TARGET}${OBJ_EXT} / ${TARGET}.h"
+        VERBATIM
+    )
+
+    # Link generated unified object file directly and expose generated header directory
+    target_sources(${TARGET} ${VISIBILITY} "${OUT_OBJ}")
     target_include_directories(${TARGET} ${VISIBILITY} "${GEN_INC_DIR}")
 endfunction()
 
@@ -125,31 +126,26 @@ function(stride_add_library LIB_NAME)
     set(GEN_INC_DIR "${GEN_DIR}/include")
     file(MAKE_DIRECTORY "${GEN_INC_DIR}")
 
-    set(GENERATED_OBJECTS "")
-    set(GENERATED_HEADERS "")
-
+    set(SRC_PATHS "")
     foreach(STRIDE_SRC IN LISTS SOURCES)
-        get_filename_component(FILE_NAME "${STRIDE_SRC}" NAME_WE)
         get_filename_component(SRC_PATH "${STRIDE_SRC}" ABSOLUTE)
-
-        set(OUT_OBJ "${GEN_DIR}/${FILE_NAME}${OBJ_EXT}")
-        set(OUT_HDR "${GEN_INC_DIR}/${FILE_NAME}.h")
-
-        add_custom_command(
-            OUTPUT "${OUT_OBJ}" "${OUT_HDR}"
-            COMMAND ${STRIDE_COMPILER_CMD}
-                    -c "${SRC_PATH}"
-                    -o "${OUT_OBJ}"
-                    --emit-header="${OUT_HDR}"
-            DEPENDS "${SRC_PATH}" ${STRIDE_COMPILER_DEP}
-            COMMENT "Compiling Stride source ${STRIDE_SRC} -> ${FILE_NAME}${OBJ_EXT} / ${FILE_NAME}.h"
-            VERBATIM
-        )
-
-        list(APPEND GENERATED_OBJECTS "${OUT_OBJ}")
-        list(APPEND GENERATED_HEADERS "${OUT_HDR}")
+        list(APPEND SRC_PATHS "${SRC_PATH}")
     endforeach()
 
-    add_library(${LIB_NAME} ${LIB_TYPE} ${GENERATED_OBJECTS} ${GENERATED_HEADERS})
+    set(OUT_OBJ "${GEN_DIR}/${LIB_NAME}${OBJ_EXT}")
+    set(OUT_HDR "${GEN_INC_DIR}/${LIB_NAME}.h")
+
+    add_custom_command(
+        OUTPUT "${OUT_OBJ}" "${OUT_HDR}"
+        COMMAND ${STRIDE_COMPILER_CMD}
+                -c ${SRC_PATHS}
+                -o "${OUT_OBJ}"
+                --emit-header="${OUT_HDR}"
+        DEPENDS ${SRC_PATHS} ${STRIDE_COMPILER_DEP}
+        COMMENT "Compiling Stride library ${LIB_NAME} -> ${LIB_NAME}${OBJ_EXT} / ${LIB_NAME}.h"
+        VERBATIM
+    )
+
+    add_library(${LIB_NAME} ${LIB_TYPE} "${OUT_OBJ}" "${OUT_HDR}")
     target_include_directories(${LIB_NAME} PUBLIC "${GEN_INC_DIR}")
 endfunction()

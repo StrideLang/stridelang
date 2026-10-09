@@ -7,7 +7,7 @@
 namespace strd {
 
 struct StridecOptions {
-  std::string inputFile;
+  std::vector<std::string> inputFiles;
   std::string outputFile;
   std::string headerFile;
   std::string targetTriple;
@@ -18,6 +18,7 @@ struct StridecOptions {
   std::string domainName;
   std::string strideRoot;
   std::vector<std::string> includeDirs;
+  bool emitAllFunctions = false;
   bool verbose = false;
   bool showHelp = false;
   bool showVersion = false;

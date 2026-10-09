@@ -1,7 +1,6 @@
 """Implementation of stride_cc_library and stride_library Starlark rules."""
 
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cpp_toolchain")
-load("@rules_cc//cc:action_names.bzl", "C_COMPILE_ACTION_NAME")
 
 def _deduce_target_args(ctx, cc_toolchain):
     """Automatically deduces target triple and CPU from the active C++ toolchain."""
@@ -51,68 +50,60 @@ def _stride_cc_library_impl(ctx):
 
     target_args = _deduce_target_args(ctx, cc_toolchain)
     
-    generated_objects = []
-    generated_headers = []
-    include_dirs = []
+    # Declare single unified output object file and header file
+    obj_file = ctx.actions.declare_file(ctx.label.name + "_gen/" + ctx.label.name + ".o")
+    hdr_file = ctx.actions.declare_file(ctx.label.name + "_gen/include/" + ctx.label.name + ".h")
 
-    for src in ctx.files.srcs:
-        base_name = src.basename.rsplit(".", 1)[0]
-        
-        # Declare output object file and header file
-        obj_file = ctx.actions.declare_file(ctx.label.name + "_gen/" + base_name + ".o")
-        hdr_file = ctx.actions.declare_file(ctx.label.name + "_gen/include/" + base_name + ".h")
+    args = ctx.actions.args()
+    args.add("-c")
+    args.add_all(ctx.files.srcs)
+    args.add("-o", obj_file)
+    args.add("--emit-header=" + hdr_file.path)
+    
+    if ctx.attr.emit_all_functions:
+        args.add("--emit-all-functions")
 
-        args = ctx.actions.args()
-        args.add("-c")
-        args.add(src)
-        args.add("-o", obj_file)
-        args.add("--emit-header=" + hdr_file.path)
-        args.add_all(target_args)
-        args.add_all(default_copts)
-        args.add_all(ctx.attr.copts)
+    args.add_all(target_args)
+    args.add_all(default_copts)
+    args.add_all(ctx.attr.copts)
 
-        # Include search paths from dependencies
-        for inc in ctx.attr.includes:
-            args.add("-I" + inc)
+    # Include search paths
+    for inc in ctx.attr.includes:
+        args.add("-I" + inc)
 
-        ctx.actions.run(
-            mnemonic = "StrideCompile",
-            progress_message = "Compiling Stride source %s -> %s" % (src.short_path, obj_file.basename),
-            executable = stridec,
-            inputs = [src],
-            outputs = [obj_file, hdr_file],
-            arguments = [args],
-            env = {},
-        )
-
-        generated_objects.append(obj_file)
-        generated_headers.append(hdr_file)
-        if hdr_file.dirname not in include_dirs:
-            include_dirs.append(hdr_file.dirname)
+    ctx.actions.run(
+        mnemonic = "StrideCompile",
+        progress_message = "Compiling Stride library %s (%d files) -> %s" % (
+            ctx.label.name, len(ctx.files.srcs), obj_file.basename
+        ),
+        executable = stridec,
+        inputs = ctx.files.srcs,
+        outputs = [obj_file, hdr_file],
+        arguments = [args],
+        env = {},
+    )
 
     # Build CcInfo compilation context (exposes generated headers and include dirs)
+    include_dirs = [hdr_file.dirname]
     compilation_context = cc_common.create_compilation_context(
-        headers = depset(generated_headers),
+        headers = depset([hdr_file]),
         includes = depset(include_dirs),
         quote_includes = depset(include_dirs),
         system_includes = depset(include_dirs),
     )
 
     # Build CcInfo linking context (links generated object files)
-    libraries_to_link = []
-    for obj in generated_objects:
-        lib_to_link = cc_common.create_library_to_link(
-            actions = ctx.actions,
-            feature_configuration = feature_configuration,
-            cc_toolchain = cc_toolchain,
-            objects = [obj],
-            pic_objects = [obj],
-        )
-        libraries_to_link.append(lib_to_link)
+    lib_to_link = cc_common.create_library_to_link(
+        actions = ctx.actions,
+        feature_configuration = feature_configuration,
+        cc_toolchain = cc_toolchain,
+        objects = [obj_file],
+        pic_objects = [obj_file],
+    )
 
     linker_input = cc_common.create_linker_input(
         owner = ctx.label,
-        libraries = depset(libraries_to_link),
+        libraries = depset([lib_to_link]),
     )
 
     linking_context = cc_common.create_linking_context(
@@ -130,8 +121,8 @@ def _stride_cc_library_impl(ctx):
 
     return [
         DefaultInfo(
-            files = depset(generated_objects + generated_headers),
-            runfiles = ctx.runfiles(files = generated_headers),
+            files = depset([obj_file, hdr_file]),
+            runfiles = ctx.runfiles(files = [hdr_file]),
         ),
         merged_cc_info,
     ]
@@ -140,9 +131,13 @@ stride_cc_library = rule(
     implementation = _stride_cc_library_impl,
     attrs = {
         "srcs": attr.label_list(
-            doc = "List of .stride source files.",
+            doc = "List of .stride source files to compile into the library.",
             allow_files = [".stride"],
             mandatory = True,
+        ),
+        "emit_all_functions": attr.bool(
+            doc = "Forces code generation for all root-level standalone functions and modules.",
+            default = False,
         ),
         "deps": attr.label_list(
             doc = "List of C/C++ or Stride dependency targets.",
@@ -173,7 +168,7 @@ stride_cc_library = rule(
     ],
     fragments = ["cpp"],
     doc = """
-    Compiles Stride stream modules into native machine object files and C headers,
+    Compiles one or more Stride stream modules into a single native machine object file and C header,
     exporting standard CcInfo providers for direct consumption by cc_binary and cc_library.
     """,
 )
