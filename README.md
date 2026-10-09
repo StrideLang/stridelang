@@ -61,7 +61,43 @@ Driver Options:
 
 ---
 
-## CMake Integration
+## Build System Integrations
+
+### 1. Bazel & Pigweed Integration (`rules_stride`)
+
+`stridelang` provides official Bazel build rules with zero-boilerplate C++ toolchain integration:
+
+#### In `MODULE.bazel`:
+```python
+bazel_dep(name = "rules_stride", version = "1.0.0")
+```
+
+#### In `BUILD.bazel`:
+```python
+load("@rules_stride//stride:defs.bzl", "stride_cc_library")
+
+# Zero configuration: compiles .stride into target object code and exports CcInfo
+stride_cc_library(
+    name = "sensor_dsp",
+    srcs = ["sensor_dsp.stride"],
+    visibility = ["//visibility:public"],
+)
+
+# Consume directly in standard cc_binary, cc_library, or Pigweed firmware
+cc_binary(
+    name = "firmware.elf",
+    srcs = ["main.c"],
+    deps = [
+        ":sensor_dsp",
+    ],
+)
+```
+
+Target architectures (ARM Cortex-M0+/M3/M4/M7/M33, RISC-V, WebAssembly, Host) are automatically deduced from the consuming target's active Bazel C++ toolchain or Pigweed platform (`@pigweed//pw_toolchain`).
+
+---
+
+### 2. CMake Integration
 
 ```cmake
 find_package(Stride REQUIRED)

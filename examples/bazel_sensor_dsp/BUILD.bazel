@@ -1,0 +1,18 @@
+load("//stride:defs.bzl", "stride_cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Stride DSP Module compiled into C++ CcInfo provider
+stride_cc_library(
+    name = "sensor_dsp",
+    srcs = ["sensor_dsp.stride"],
+)
+
+# Host / Embedded executable consuming the Stride DSP module
+cc_binary(
+    name = "sensor_app",
+    srcs = ["main.c"],
+    deps = [
+        ":sensor_dsp",
+    ],
+)
