@@ -7,7 +7,6 @@
 
 #include "stride/parser/ast.h"
 #include "stride/stridejit/strideenvironment.hpp"
-#include "stride/utils/logger.h"
 
 namespace strd {
 
