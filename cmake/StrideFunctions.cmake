@@ -51,7 +51,7 @@ function(stride_target_sources TARGET VISIBILITY)
 
     if(STRIDE_TARGET_CPU)
         list(APPEND COMPILER_ARGS "-mcpu=${STRIDE_TARGET_CPU}")
-    elseif(CMAKE_SYSTEM_PROCESSOR)
+    elseif(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR)
         list(APPEND COMPILER_ARGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR}")
     endif()
 

@@ -238,7 +238,11 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
     if (opts.verbose) {
       out << "Emitting object file: " << opts.outputFile << "\n";
     }
-    if (!env.emitObjectFile(opts.outputFile, opts.targetTriple, opts.targetCPU,
+    std::string effectiveCPU = opts.targetCPU;
+    if (effectiveCPU == "x86_64") {
+      effectiveCPU = "x86-64";
+    }
+    if (!env.emitObjectFile(opts.outputFile, opts.targetTriple, effectiveCPU,
                             opts.targetFeatures, opts.relocModel, opts.codeModel)) {
       err << "stridec: error: failed to write object file to '" << opts.outputFile << "'\n";
       return 1;
