@@ -6,6 +6,7 @@
 
 #include "stride/stridejit/strideenvironment.hpp"
 
+#include "llvm/Config/llvm-config.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/TargetParser/Triple.h"
@@ -17,7 +18,11 @@ bool isTargetSupported(const std::string &tripleStr) {
   llvm::InitializeAllTargets();
   std::string error;
   llvm::Triple triple(tripleStr);
+#if LLVM_VERSION_MAJOR >= 20
   return llvm::TargetRegistry::lookupTarget(triple, error) != nullptr;
+#else
+  return llvm::TargetRegistry::lookupTarget(triple.str(), error) != nullptr;
+#endif
 }
 
 std::vector<uint8_t> readFileBytes(const std::string &path) {
