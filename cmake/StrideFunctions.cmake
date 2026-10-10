@@ -96,7 +96,7 @@ function(stride_target_sources TARGET VISIBILITY)
         COMMAND ${STRIDE_COMPILER_CMD}
                 -c ${SRC_PATHS}
                 -o "${OUT_OBJ}"
-                --emit-header="${OUT_HDR}"
+                --emit-header "${OUT_HDR}"
                 ${COMPILER_ARGS}
         ${POST_COMMANDS}
         DEPENDS ${SRC_PATHS} ${STRIDE_COMPILER_DEP}
@@ -156,7 +156,7 @@ function(stride_add_library LIB_NAME)
         COMMAND ${STRIDE_COMPILER_CMD}
                 -c ${SRC_PATHS}
                 -o "${OUT_OBJ}"
-                --emit-header="${OUT_HDR}"
+                --emit-header "${OUT_HDR}"
         DEPENDS ${SRC_PATHS} ${STRIDE_COMPILER_DEP}
         COMMENT "Compiling Stride library ${LIB_NAME} -> ${LIB_NAME}${OBJ_EXT} / ${LIB_NAME}.h"
         VERBATIM

@@ -18,10 +18,18 @@ bool parseOptionWithVal(const std::string &arg, size_t &i,
   if (arg == prefix) {
     if (i + 1 < args.size()) {
       outVal = args[++i];
+      if (outVal.size() >= 2 && ((outVal.front() == '"' && outVal.back() == '"') ||
+                                 (outVal.front() == '\'' && outVal.back() == '\''))) {
+        outVal = outVal.substr(1, outVal.size() - 2);
+      }
       return true;
     }
   } else if (arg.rfind(prefix + "=", 0) == 0) {
     outVal = arg.substr(prefix.length() + 1);
+    if (outVal.size() >= 2 && ((outVal.front() == '"' && outVal.back() == '"') ||
+                               (outVal.front() == '\'' && outVal.back() == '\''))) {
+      outVal = outVal.substr(1, outVal.size() - 2);
+    }
     return true;
   }
   return false;
