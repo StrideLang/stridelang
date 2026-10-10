@@ -73,18 +73,34 @@ function(stride_target_sources TARGET VISIBILITY)
         list(APPEND SRC_PATHS "${SRC_PATH}")
     endforeach()
 
+    list(LENGTH ARGN NUM_SRCS)
+    if(NUM_SRCS EQUAL 1)
+        list(GET ARGN 0 FIRST_SRC)
+        get_filename_component(SRC_BASE "${FIRST_SRC}" NAME_WE)
+    else()
+        set(SRC_BASE "${TARGET}")
+    endif()
+
     set(OUT_OBJ "${GEN_DIR}/${TARGET}${OBJ_EXT}")
-    set(OUT_HDR "${GEN_INC_DIR}/${TARGET}.h")
+    set(OUT_HDR "${GEN_INC_DIR}/${SRC_BASE}.h")
+
+    set(ALL_OUT_HDRS "${OUT_HDR}")
+    set(POST_COMMANDS "")
+    if(NOT "${SRC_BASE}" STREQUAL "${TARGET}")
+        list(APPEND ALL_OUT_HDRS "${GEN_INC_DIR}/${TARGET}.h")
+        set(POST_COMMANDS COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OUT_HDR}" "${GEN_INC_DIR}/${TARGET}.h")
+    endif()
 
     add_custom_command(
-        OUTPUT "${OUT_OBJ}" "${OUT_HDR}"
+        OUTPUT "${OUT_OBJ}" ${ALL_OUT_HDRS}
         COMMAND ${STRIDE_COMPILER_CMD}
                 -c ${SRC_PATHS}
                 -o "${OUT_OBJ}"
                 --emit-header="${OUT_HDR}"
                 ${COMPILER_ARGS}
+        ${POST_COMMANDS}
         DEPENDS ${SRC_PATHS} ${STRIDE_COMPILER_DEP}
-        COMMENT "Compiling Stride sources -> ${TARGET}${OBJ_EXT} / ${TARGET}.h"
+        COMMENT "Compiling Stride sources -> ${TARGET}${OBJ_EXT} / ${SRC_BASE}.h"
         VERBATIM
     )
 
