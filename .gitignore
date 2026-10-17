@@ -2,3 +2,5 @@ build/
 .qtcreator/
 .vscode/
 *.user*
+.strdcache/
+*.scache
