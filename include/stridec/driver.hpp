@@ -40,11 +40,36 @@ struct StridecOptions {
   std::string domainName;
   std::string strideRoot;
   std::vector<std::string> includeDirs;
+  // Arduino pre-built library options
+  std::string arduinoLibDir;
+  std::string arduinoLibName;
+  std::string arduinoLibArch = "arm";
+  std::string arduinoLibMcu;
+  std::string arduinoAuthor = "Stride";
+  std::string arduinoVersion = "1.0.0";
   bool emitAllFunctions = false;
   bool verbose = false;
   bool showHelp = false;
   bool showVersion = false;
 };
+
+struct ArduinoTarget {
+  std::string mcu;
+  std::string triple;
+  std::string cpu;
+  std::string features;
+  std::string subfolder;
+};
+
+std::vector<ArduinoTarget> getSupportedArduinoTargets(const std::string &arch = "arm");
+
+bool writeStaticArchive(const std::string &archivePath,
+                        const std::vector<std::string> &memberPaths,
+                        std::string &errorMsg);
+
+bool emitArduinoLibrary(const StridecOptions &opts,
+                        std::ostream &out = std::cout,
+                        std::ostream &err = std::cerr);
 
 void printHelp(std::ostream &os, const char *progName = "stridec");
 void printVersion(std::ostream &os);

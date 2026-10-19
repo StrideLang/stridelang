@@ -44,9 +44,18 @@ Code Generation & Relocation Options:
   -c                                   Compile to object file (do not link)
 
 Output & Header Options:
-  -o <file>                            Output object file (.o)
+  -o <file>                            Output object file (.o) or static archive (.a)
   --emit-header=<file>, --header-out   Output C interface header file (.h)
   --domain=<name>, -domain <name>      Specific domain to generate header for
+
+Arduino Pre-built Library Options:
+  --emit-arduino-lib=<dir>, --arduino-lib=<dir>
+                                       Output an Arduino-compatible precompiled library bundle
+  --arduino-name=<name>                Name of the Arduino library (default: derived from input)
+  --arduino-arch=<arch>                Target architecture: arm (default), all
+  --arduino-mcu=<mcus>                 Comma-separated list of target MCUs (e.g. cortex-m0plus,cortex-m4)
+  --arduino-author=<author>            Author name for library.properties (default: Stride)
+  --arduino-version=<ver>              Library version for library.properties (default: 1.0.0)
 
 Include & Path Options:
   -I <dir>, -I<dir>                    Add directory to .stride include search path
@@ -134,6 +143,55 @@ When using `stride_target_sources()` or `stride_add_library()`, Stride automatic
   )
   ```
 
+### 3. Arduino Pre-built Library Generation
+
+Stride can package compiled `.stride` modules into standard, precompiled Arduino libraries (compliant with the [Arduino Library Specification rev 2.2](https://arduino.github.io/arduino-cli/latest/library-specification/#precompiled-libraries)), with initial support for ARM microcontrollers.
+
+#### CLI Generation:
+```bash
+# Build precompiled Arduino library supporting all standard ARM Cortex MCUs:
+# (cortex-m0plus, cortex-m3, cortex-m4, cortex-m7, cortex-m33)
+stridec --emit-arduino-lib=SensorDSP stride/sensor_dsp.stride
+
+# Target a specific MCU or set of MCUs:
+stridec --emit-arduino-lib=CustomFilter --arduino-mcu=cortex-m4 stride/sensor_dsp.stride
+```
+
+#### Generated Arduino Directory Structure:
+```text
+SensorDSP/
+├── library.properties          # Metadata configured with precompiled=full & ldflags
+├── examples/
+│   └── SensorDSPDemo/
+│       └── SensorDSPDemo.ino   # Ready-to-run demo sketch for the Arduino IDE
+└── src/
+    ├── SensorDSP.h             # Public C/C++ interface header
+    ├── SensorDSP.cpp           # Compatibility source stub
+    ├── cortex-m0plus/
+    │   └── libSensorDSP.a      # Precompiled static archive (RP2040, SAMD21, etc.)
+    ├── cortex-m3/
+    │   └── libSensorDSP.a      # Precompiled static archive (Arduino Due, SAM3X)
+    ├── cortex-m4/
+    │   └── libSensorDSP.a      # Precompiled static archive (Uno R4, Nano 33 BLE, Teensy)
+    ├── cortex-m7/
+    │   └── libSensorDSP.a      # Precompiled static archive (Portenta H7, Giga R1, Teensy 4)
+    └── cortex-m33/
+        └── libSensorDSP.a      # Precompiled static archive (RP2350, Cortex-M33)
+```
+
+#### CMake Integration:
+```cmake
+# Using dedicated helper
+stride_add_arduino_library(SensorDSP
+    SOURCES stride/sensor_dsp.stride
+    MCUS cortex-m0plus cortex-m4 cortex-m7
+)
+
+# Or using stride_add_library with ARDUINO option:
+stride_add_library(SensorDSP ARDUINO
+    SOURCES stride/sensor_dsp.stride
+)
+```
 
 ---
 

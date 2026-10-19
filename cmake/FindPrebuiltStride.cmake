@@ -119,6 +119,7 @@ endif()
 
 set(LLVM_COMPONENTS
     LLVMSupport LLVMCore LLVMIRReader LLVMOrcJIT LLVMExecutionEngine LLVMMIRParser
+    LLVMObject LLVMBitReader
     LLVMAArch64AsmParser LLVMAArch64CodeGen LLVMX86AsmParser LLVMX86CodeGen
     LLVMARMAsmParser LLVMARMCodeGen LLVMWebAssemblyAsmParser LLVMWebAssemblyCodeGen
 )

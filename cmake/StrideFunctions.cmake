@@ -158,8 +158,74 @@ function(stride_target_sources TARGET VISIBILITY)
     endif()
 endfunction()
 
+function(stride_add_arduino_library LIB_NAME)
+    cmake_parse_arguments(ARG "" "OUTPUT_DIR;AUTHOR;VERSION;ARCH;DOMAIN" "SOURCES;MCUS" ${ARGN})
+    set(SOURCES ${ARG_SOURCES} ${ARG_UNPARSED_ARGUMENTS})
+    if(NOT SOURCES)
+        message(FATAL_ERROR "stride_add_arduino_library requires at least one .stride source file.")
+    endif()
+
+    if(TARGET Stride::Compiler)
+        set(STRIDE_COMPILER_CMD Stride::Compiler)
+        set(STRIDE_COMPILER_DEP Stride::Compiler)
+    elseif(STRIDE_COMPILER_BIN)
+        set(STRIDE_COMPILER_CMD "${STRIDE_COMPILER_BIN}")
+        set(STRIDE_COMPILER_DEP "${STRIDE_COMPILER_BIN}")
+    else()
+        find_program(STRIDE_COMPILER_CMD stridec)
+        if(NOT STRIDE_COMPILER_CMD)
+            message(FATAL_ERROR "stridec compiler executable not found. Ensure Stride is installed or STRIDE_COMPILER_BIN is set.")
+        endif()
+        set(STRIDE_COMPILER_DEP "")
+    endif()
+
+    if(NOT ARG_OUTPUT_DIR)
+        set(ARG_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/${LIB_NAME}")
+    endif()
+
+    set(SRC_PATHS "")
+    foreach(STRIDE_SRC IN LISTS SOURCES)
+        get_filename_component(SRC_PATH "${STRIDE_SRC}" ABSOLUTE)
+        list(APPEND SRC_PATHS "${SRC_PATH}")
+    endforeach()
+
+    set(EXTRA_ARGS "")
+    if(ARG_AUTHOR)
+        list(APPEND EXTRA_ARGS "--arduino-author=${ARG_AUTHOR}")
+    endif()
+    if(ARG_VERSION)
+        list(APPEND EXTRA_ARGS "--arduino-version=${ARG_VERSION}")
+    endif()
+    if(ARG_ARCH)
+        list(APPEND EXTRA_ARGS "--arduino-arch=${ARG_ARCH}")
+    endif()
+    if(ARG_DOMAIN)
+        list(APPEND EXTRA_ARGS "--domain=${ARG_DOMAIN}")
+    endif()
+    if(ARG_MCUS)
+        string(REPLACE ";" "," MCU_LIST "${ARG_MCUS}")
+        list(APPEND EXTRA_ARGS "--arduino-mcu=${MCU_LIST}")
+    endif()
+
+    add_custom_target(${LIB_NAME}
+        COMMAND ${STRIDE_COMPILER_CMD}
+            --emit-arduino-lib="${ARG_OUTPUT_DIR}"
+            --arduino-name="${LIB_NAME}"
+            ${EXTRA_ARGS}
+            ${SRC_PATHS}
+        DEPENDS ${SRC_PATHS} ${STRIDE_COMPILER_DEP}
+        COMMENT "Generating Arduino pre-built library bundle: ${LIB_NAME} in ${ARG_OUTPUT_DIR}"
+        VERBATIM
+    )
+endfunction()
+
 function(stride_add_library LIB_NAME)
-    cmake_parse_arguments(ARG "STATIC;OBJECT;NO_DEFAULT_LIBS" "" "LINK_LIBRARIES;PLATFORM_LIBS" ${ARGN})
+    cmake_parse_arguments(ARG "STATIC;OBJECT;ARDUINO;NO_DEFAULT_LIBS" "OUTPUT_DIR;AUTHOR;VERSION;ARCH;DOMAIN" "LINK_LIBRARIES;PLATFORM_LIBS;MCUS" ${ARGN})
+    if(ARG_ARDUINO)
+        stride_add_arduino_library(${LIB_NAME} ${ARGN})
+        return()
+    endif()
+
     set(LIB_TYPE "STATIC")
     if(ARG_OBJECT)
         set(LIB_TYPE "OBJECT")
