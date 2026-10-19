@@ -112,6 +112,29 @@ stride_target_sources(my_firmware PRIVATE
 )
 ```
 
+#### Automatic Dependency Linking & Platform Extensibility
+
+When using `stride_target_sources()` or `stride_add_library()`, Stride automatically manages all required runtime and C library dependencies:
+* **Stride Runtime (`Stride::Runtime`)**: Automatically linked if available to supply string and runtime helpers (`StrideRuntime.lib` / `libStrideRuntime.a`).
+* **Math & C Libraries (`libm` / `libc`)**: On standard desktop OSes (Linux/macOS), the math library (`-lm`) is automatically linked. On Windows, the standard MSVC CRT is linked.
+* **Embedded SDK Detection**: If an embedded SDK target is active (e.g. `pico_stdlib` for Raspberry Pi Pico, Zephyr RTOS, or ESP-IDF), generic compiler libraries are suppressed so the SDK's hardware-accelerated memory and math routines (such as `pico_mem_ops`) take precedence without duplicate symbol collisions.
+* **Bare-Metal Toolchains**: When `CMAKE_SYSTEM_NAME` is set to `Generic`, host libraries are not injected; toolchain specs (e.g. `--specs=nano.specs`) govern runtime linking.
+* **Manual Overrides**:
+  ```cmake
+  # Suppress default libraries on custom RTOS
+  stride_target_sources(my_firmware PRIVATE
+      stride/sensor_dsp.stride
+      NO_DEFAULT_LIBS
+  )
+
+  # Explicitly link additional platform SDK libraries
+  stride_target_sources(my_firmware PRIVATE
+      stride/sensor_dsp.stride
+      LINK_LIBRARIES pico_stdlib hardware_adc
+  )
+  ```
+
+
 ---
 
 ## Building `stridelang`

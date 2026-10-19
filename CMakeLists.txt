@@ -60,8 +60,11 @@ target_link_libraries(stridec PRIVATE
     stridec_driver
 )
 
-# Exported Alias
+# Exported Aliases
 add_executable(Stride::Compiler ALIAS stridec)
+if(TARGET StrideRuntime AND NOT TARGET Stride::Runtime)
+    add_library(Stride::Runtime ALIAS StrideRuntime)
+endif()
 
 # Installation & CMake Package Configuration -------------------------------
 include(GNUInstallDirs)
@@ -80,6 +83,15 @@ install(TARGETS stridec
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT Compiler
 )
+
+if(TARGET StrideRuntime)
+    install(TARGETS StrideRuntime
+        EXPORT StrideTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        COMPONENT Development
+    )
+endif()
 
 # Export CMake target definitions
 install(EXPORT StrideTargets

@@ -12,3 +12,15 @@ add_executable(test_dsp_firmware
 stride_target_sources(test_dsp_firmware PRIVATE
     dsp.stride
 )
+
+# Test custom linking overrides with NO_DEFAULT_LIBS
+add_executable(test_dsp_custom
+    main.c
+)
+
+stride_target_sources(test_dsp_custom PRIVATE
+    dsp.stride
+    NO_DEFAULT_LIBS
+    LINK_LIBRARIES ${CMAKE_C_STANDARD_LIBRARIES}
+)
+

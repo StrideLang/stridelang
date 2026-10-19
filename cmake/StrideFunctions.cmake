@@ -5,7 +5,9 @@ Helper CMake functions for integrating Stride files into build targets.
 #]=======================================================================]
 
 function(stride_target_sources TARGET VISIBILITY)
-    if(NOT ARGN)
+    cmake_parse_arguments(STRIDE_ARG "NO_DEFAULT_LIBS" "" "LINK_LIBRARIES;PLATFORM_LIBS" ${ARGN})
+    set(SOURCES ${STRIDE_ARG_UNPARSED_ARGUMENTS})
+    if(NOT SOURCES)
         message(FATAL_ERROR "stride_target_sources requires at least one .stride source file.")
     endif()
 
@@ -68,14 +70,14 @@ function(stride_target_sources TARGET VISIBILITY)
     endif()
 
     set(SRC_PATHS "")
-    foreach(STRIDE_SRC IN LISTS ARGN)
+    foreach(STRIDE_SRC IN LISTS SOURCES)
         get_filename_component(SRC_PATH "${STRIDE_SRC}" ABSOLUTE)
         list(APPEND SRC_PATHS "${SRC_PATH}")
     endforeach()
 
-    list(LENGTH ARGN NUM_SRCS)
+    list(LENGTH SOURCES NUM_SRCS)
     if(NUM_SRCS EQUAL 1)
-        list(GET ARGN 0 FIRST_SRC)
+        list(GET SOURCES 0 FIRST_SRC)
         get_filename_component(SRC_BASE "${FIRST_SRC}" NAME_WE)
     else()
         set(SRC_BASE "${TARGET}")
@@ -107,10 +109,57 @@ function(stride_target_sources TARGET VISIBILITY)
     # Link generated unified object file directly and expose generated header directory
     target_sources(${TARGET} ${VISIBILITY} "${OUT_OBJ}")
     target_include_directories(${TARGET} ${VISIBILITY} "${GEN_INC_DIR}")
+
+    # 1. Automatically link Stride Runtime if available
+    if(TARGET Stride::Runtime)
+        target_link_libraries(${TARGET} ${VISIBILITY} Stride::Runtime)
+    elseif(TARGET StrideRuntime)
+        target_link_libraries(${TARGET} ${VISIBILITY} StrideRuntime)
+    endif()
+
+    # 2. Automatically link platform/compiler C libraries unless NO_DEFAULT_LIBS is requested
+    if(NOT STRIDE_ARG_NO_DEFAULT_LIBS)
+        # Check if an embedded SDK target is active in the build tree
+        set(_STRIDE_EMBEDDED_SDK FALSE)
+        if(TARGET pico_stdlib OR TARGET pico_base OR TARGET zephyr_interface OR TARGET idf::main OR DEFINED ZEPHYR_BASE OR DEFINED IDF_PATH)
+            set(_STRIDE_EMBEDDED_SDK TRUE)
+        endif()
+
+        # Check for bare-metal generic toolchain
+        set(_STRIDE_BAREMETAL FALSE)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
+            set(_STRIDE_BAREMETAL TRUE)
+        endif()
+
+        # On standard desktop OS (Linux/macOS), link standard math library (libm) on non-MSVC
+        if(NOT _STRIDE_EMBEDDED_SDK AND NOT _STRIDE_BAREMETAL)
+            if(NOT MSVC)
+                find_library(_STRIDE_LIBM m)
+                if(_STRIDE_LIBM)
+                    target_link_libraries(${TARGET} ${VISIBILITY} ${_STRIDE_LIBM})
+                else()
+                    target_link_libraries(${TARGET} ${VISIBILITY} m)
+                endif()
+            endif()
+        endif()
+    endif()
+
+    # 3. Link explicit libraries if provided via arguments or target property
+    if(STRIDE_ARG_LINK_LIBRARIES)
+        target_link_libraries(${TARGET} ${VISIBILITY} ${STRIDE_ARG_LINK_LIBRARIES})
+    endif()
+    if(STRIDE_ARG_PLATFORM_LIBS)
+        target_link_libraries(${TARGET} ${VISIBILITY} ${STRIDE_ARG_PLATFORM_LIBS})
+    endif()
+
+    get_target_property(_TARGET_STRIDE_LIBS ${TARGET} STRIDE_LINK_LIBRARIES)
+    if(_TARGET_STRIDE_LIBS)
+        target_link_libraries(${TARGET} ${VISIBILITY} ${_TARGET_STRIDE_LIBS})
+    endif()
 endfunction()
 
 function(stride_add_library LIB_NAME)
-    cmake_parse_arguments(ARG "STATIC;OBJECT" "" "" ${ARGN})
+    cmake_parse_arguments(ARG "STATIC;OBJECT;NO_DEFAULT_LIBS" "" "LINK_LIBRARIES;PLATFORM_LIBS" ${ARGN})
     set(LIB_TYPE "STATIC")
     if(ARG_OBJECT)
         set(LIB_TYPE "OBJECT")
@@ -164,4 +213,53 @@ function(stride_add_library LIB_NAME)
 
     add_library(${LIB_NAME} ${LIB_TYPE} "${OUT_OBJ}" "${OUT_HDR}")
     target_include_directories(${LIB_NAME} PUBLIC "${GEN_INC_DIR}")
+
+    set(LINK_VIS "PUBLIC")
+    if(LIB_TYPE STREQUAL "OBJECT")
+        set(LINK_VIS "PRIVATE")
+    endif()
+
+    # 1. Link Stride Runtime if available
+    if(TARGET Stride::Runtime)
+        target_link_libraries(${LIB_NAME} ${LINK_VIS} Stride::Runtime)
+    elseif(TARGET StrideRuntime)
+        target_link_libraries(${LIB_NAME} ${LINK_VIS} StrideRuntime)
+    endif()
+
+    # 2. Automatically link platform/compiler C libraries unless NO_DEFAULT_LIBS is requested
+    if(NOT ARG_NO_DEFAULT_LIBS)
+        set(_STRIDE_EMBEDDED_SDK FALSE)
+        if(TARGET pico_stdlib OR TARGET pico_base OR TARGET zephyr_interface OR TARGET idf::main OR DEFINED ZEPHYR_BASE OR DEFINED IDF_PATH)
+            set(_STRIDE_EMBEDDED_SDK TRUE)
+        endif()
+
+        set(_STRIDE_BAREMETAL FALSE)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
+            set(_STRIDE_BAREMETAL TRUE)
+        endif()
+
+        if(NOT _STRIDE_EMBEDDED_SDK AND NOT _STRIDE_BAREMETAL)
+            if(NOT MSVC)
+                find_library(_STRIDE_LIBM m)
+                if(_STRIDE_LIBM)
+                    target_link_libraries(${LIB_NAME} ${LINK_VIS} ${_STRIDE_LIBM})
+                else()
+                    target_link_libraries(${LIB_NAME} ${LINK_VIS} m)
+                endif()
+            endif()
+        endif()
+    endif()
+
+    # 3. Link explicit libraries if provided via arguments or property
+    if(ARG_LINK_LIBRARIES)
+        target_link_libraries(${LIB_NAME} ${LINK_VIS} ${ARG_LINK_LIBRARIES})
+    endif()
+    if(ARG_PLATFORM_LIBS)
+        target_link_libraries(${LIB_NAME} ${LINK_VIS} ${ARG_PLATFORM_LIBS})
+    endif()
+
+    get_target_property(_LIB_STRIDE_LIBS ${LIB_NAME} STRIDE_LINK_LIBRARIES)
+    if(_LIB_STRIDE_LIBS)
+        target_link_libraries(${LIB_NAME} ${LINK_VIS} ${_LIB_STRIDE_LIBS})
+    endif()
 endfunction()

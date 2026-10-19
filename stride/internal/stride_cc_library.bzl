@@ -101,9 +101,18 @@ def _stride_cc_library_impl(ctx):
         pic_objects = [obj_file],
     )
 
+    # Resolve platform link options
+    platform_linkopts = []
+    if not ctx.attr.no_default_libs:
+        cpu = getattr(cc_toolchain, "cpu", "").lower()
+        # If not bare-metal microcontroller, inject -lm for math operations
+        if not ("cortex" in cpu or "armv" in cpu or "wasm" in cpu or "riscv" in cpu or "rp2040" in cpu):
+            platform_linkopts.append("-lm")
+
     linker_input = cc_common.create_linker_input(
         owner = ctx.label,
         libraries = depset([lib_to_link]),
+        user_link_flags = depset(platform_linkopts + ctx.attr.linkopts),
     )
 
     linking_context = cc_common.create_linking_context(
@@ -147,6 +156,14 @@ stride_cc_library = rule(
         "copts": attr.string_list(
             doc = "Additional compiler flags passed to stridec.",
             default = [],
+        ),
+        "linkopts": attr.string_list(
+            doc = "Additional linker flags passed to downstream binaries linking this library.",
+            default = [],
+        ),
+        "no_default_libs": attr.bool(
+            doc = "Disables automatic injection of default platform math/runtime libraries.",
+            default = False,
         ),
         "includes": attr.string_list(
             doc = "List of include search paths to add.",

@@ -47,6 +47,45 @@ else()
     endif()
 endif()
 
+# 3. Export Stride::Runtime static library target if available
+if(TARGET StrideRuntime)
+    if(NOT TARGET Stride::Runtime)
+        add_library(Stride::Runtime ALIAS StrideRuntime)
+    endif()
+else()
+    find_library(STRIDE_RUNTIME_LIBRARY
+        NAMES StrideRuntime libStrideRuntime
+        HINTS
+            ${STRIDE_ROOT}
+            ENV STRIDE_ROOT
+        PATH_SUFFIXES lib lib64
+        DOC "Stride Runtime static library"
+    )
+    if(STRIDE_RUNTIME_LIBRARY AND NOT TARGET Stride::Runtime)
+        add_library(Stride::Runtime STATIC IMPORTED GLOBAL)
+        set_target_properties(Stride::Runtime PROPERTIES
+            IMPORTED_LOCATION "${STRIDE_RUNTIME_LIBRARY}"
+        )
+    endif()
+endif()
+
+# 4. Define Stride::PlatformLibs interface target for transitive platform dependencies
+if(NOT TARGET Stride::PlatformLibs)
+    add_library(Stride::PlatformLibs INTERFACE IMPORTED GLOBAL)
+    if(NOT MSVC AND NOT CMAKE_CROSSCOMPILING)
+        find_library(_STRIDE_LIBM m)
+        if(_STRIDE_LIBM)
+            set_property(TARGET Stride::PlatformLibs APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${_STRIDE_LIBM})
+        else()
+            set_property(TARGET Stride::PlatformLibs APPEND PROPERTY INTERFACE_LINK_LIBRARIES m)
+        endif()
+    endif()
+endif()
+
+if(TARGET Stride::Runtime)
+    set_property(TARGET Stride::Runtime APPEND PROPERTY INTERFACE_LINK_LIBRARIES Stride::PlatformLibs)
+endif()
+
 if(STRIDE_FOUND)
     include("${CMAKE_CURRENT_LIST_DIR}/StrideFunctions.cmake")
 endif()
