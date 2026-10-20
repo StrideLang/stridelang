@@ -12,8 +12,19 @@ namespace {
 std::string readFileContent(const std::string &path) {
   std::ifstream file(path);
   if (!file) return "";
-  return std::string((std::istreambuf_iterator<char>(file)),
-                     std::istreambuf_iterator<char>());
+  std::string content((std::istreambuf_iterator<char>(file)),
+                      std::istreambuf_iterator<char>());
+  file.close();
+  return content;
+}
+
+bool checkArMagic(const std::string &path) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f) return false;
+  char magic[8] = {0};
+  f.read(magic, 8);
+  f.close();
+  return std::string(magic, 8) == "!<arch>\n";
 }
 
 } // namespace
@@ -230,7 +241,9 @@ TEST_F(StridecDriverTest, StandaloneFunctionLibraryWithFlag) {
 TEST_F(StridecDriverTest, DirectStaticArchiveOutput) {
   std::filesystem::path tempDir =
       std::filesystem::temp_directory_path() / "stridec_direct_archive_test";
-  std::filesystem::create_directories(tempDir);
+  std::error_code ec;
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
 
   std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
   std::string archivePath = (tempDir / "libSensorDSP.a").string();
@@ -250,19 +263,17 @@ TEST_F(StridecDriverTest, DirectStaticArchiveOutput) {
   EXPECT_GT(std::filesystem::file_size(archivePath), 0);
 
   // Validate standard Unix / GNU ar magic "!<arch>\n"
-  std::ifstream f(archivePath, std::ios::binary);
-  char magic[8] = {0};
-  f.read(magic, 8);
-  EXPECT_EQ(std::string(magic, 8), "!<arch>\n");
+  EXPECT_TRUE(checkArMagic(archivePath));
 
-  std::filesystem::remove_all(tempDir);
+  std::filesystem::remove_all(tempDir, ec);
 }
 
 TEST_F(StridecDriverTest, ArduinoLibraryBundleDefaultArm) {
   std::filesystem::path tempDir =
       std::filesystem::temp_directory_path() / "stridec_arduino_arm_test";
-  std::filesystem::remove_all(tempDir);
-  std::filesystem::create_directories(tempDir);
+  std::error_code ec;
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
 
   std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
   std::string libDir = (tempDir / "SensorDSP").string();
@@ -315,20 +326,18 @@ TEST_F(StridecDriverTest, ArduinoLibraryBundleDefaultArm) {
     EXPECT_GT(std::filesystem::file_size(archFile), 0);
 
     // Validate ar magic
-    std::ifstream af(archFile.string(), std::ios::binary);
-    char magic[8] = {0};
-    af.read(magic, 8);
-    EXPECT_EQ(std::string(magic, 8), "!<arch>\n") << "Invalid ar magic for MCU: " << mcu;
+    EXPECT_TRUE(checkArMagic(archFile.string())) << "Invalid ar magic for MCU: " << mcu;
   }
 
-  std::filesystem::remove_all(tempDir);
+  std::filesystem::remove_all(tempDir, ec);
 }
 
 TEST_F(StridecDriverTest, ArduinoLibraryBundleTargetedMcuAndCustomName) {
   std::filesystem::path tempDir =
       std::filesystem::temp_directory_path() / "stridec_arduino_mcu_test";
-  std::filesystem::remove_all(tempDir);
-  std::filesystem::create_directories(tempDir);
+  std::error_code ec;
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
 
   std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
   std::string libDir = (tempDir / "CustomFilter").string();
@@ -363,5 +372,5 @@ TEST_F(StridecDriverTest, ArduinoLibraryBundleTargetedMcuAndCustomName) {
   std::filesystem::path m0Archive = tempDir / "CustomFilter" / "src" / "cortex-m0plus";
   EXPECT_FALSE(std::filesystem::exists(m0Archive));
 
-  std::filesystem::remove_all(tempDir);
+  std::filesystem::remove_all(tempDir, ec);
 }
