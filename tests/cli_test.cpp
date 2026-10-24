@@ -373,4 +373,45 @@ TEST_F(StridecDriverTest, ArduinoLibraryBundleTargetedMcuAndCustomName) {
   EXPECT_FALSE(std::filesystem::exists(m0Archive));
 
   std::filesystem::remove_all(tempDir, ec);
+
+
+TEST_F(StridecDriverTest, DebugAndOptimizationFlags) {
+  strd::StridecOptions opts;
+  std::string errorMsg;
+
+  // -g flag (full debug info)
+  EXPECT_TRUE(strd::parseCommandLine({"-g", "-O0", "--build-type=debug"}, opts, errorMsg));
+  EXPECT_TRUE(opts.debugInfo);
+  EXPECT_EQ(opts.debugInfoLevel, "full");
+  EXPECT_EQ(opts.optimizationLevel, 0);
+  EXPECT_EQ(opts.buildType, "debug");
+
+  // -gline-tables-only
+  opts = strd::StridecOptions();
+  EXPECT_TRUE(strd::parseCommandLine({"-gline-tables-only", "-O2"}, opts, errorMsg));
+  EXPECT_TRUE(opts.debugInfo);
+  EXPECT_EQ(opts.debugInfoLevel, "line-tables-only");
+  EXPECT_EQ(opts.optimizationLevel, 2);
+
+  // -g0 disables debug info
+  opts = strd::StridecOptions();
+  EXPECT_TRUE(strd::parseCommandLine({"-g0", "-O3"}, opts, errorMsg));
+  EXPECT_FALSE(opts.debugInfo);
+  EXPECT_EQ(opts.debugInfoLevel, "none");
+  EXPECT_EQ(opts.optimizationLevel, 3);
+
+  // Vectorization and loop unrolling flags
+  opts = strd::StridecOptions();
+  EXPECT_TRUE(strd::parseCommandLine({"-fvectorize", "-funroll-loops"}, opts, errorMsg));
+  EXPECT_TRUE(opts.vectorize);
+  EXPECT_FALSE(opts.noVectorize);
+  EXPECT_TRUE(opts.unrollLoops);
+  EXPECT_FALSE(opts.noUnrollLoops);
+
+  opts = strd::StridecOptions();
+  EXPECT_TRUE(strd::parseCommandLine({"-fno-vectorize", "-fno-unroll-loops"}, opts, errorMsg));
+  EXPECT_TRUE(opts.noVectorize);
+  EXPECT_FALSE(opts.vectorize);
+  EXPECT_TRUE(opts.noUnrollLoops);
+  EXPECT_FALSE(opts.unrollLoops);
 }

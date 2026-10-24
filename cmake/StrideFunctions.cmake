@@ -4,6 +4,65 @@ StrideFunctions
 Helper CMake functions for integrating Stride files into build targets.
 #]=======================================================================]
 
+macro(_stride_get_compiler_args OUT_VAR)
+    set(${OUT_VAR} "")
+
+    if(STRIDE_TARGET_TRIPLE)
+        list(APPEND ${OUT_VAR} "--target=${STRIDE_TARGET_TRIPLE}")
+    elseif(CMAKE_CROSSCOMPILING)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m0" OR CMAKE_SYSTEM_PROCESSOR MATCHES "armv6-m")
+            list(APPEND ${OUT_VAR} "--target=thumbv6m-none-eabi")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m3" OR CMAKE_SYSTEM_PROCESSOR MATCHES "armv7-m")
+            list(APPEND ${OUT_VAR} "--target=thumbv7m-none-eabi")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m4" OR CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m7")
+            list(APPEND ${OUT_VAR} "--target=thumbv7em-none-eabi")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m33" OR CMAKE_SYSTEM_PROCESSOR MATCHES "armv8-m")
+            list(APPEND ${OUT_VAR} "--target=thumbv8m.main-none-eabi")
+        elseif(CMAKE_SYSTEM_PROCESSOR)
+            list(APPEND ${OUT_VAR} "--target=arm-none-eabi")
+        endif()
+    endif()
+
+    if(STRIDE_TARGET_CPU)
+        list(APPEND ${OUT_VAR} "-mcpu=${STRIDE_TARGET_CPU}")
+    elseif(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR)
+        list(APPEND ${OUT_VAR} "-mcpu=${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+
+    if(STRIDE_RELOC_MODEL)
+        list(APPEND ${OUT_VAR} "-f${STRIDE_RELOC_MODEL}")
+    endif()
+
+    if(STRIDE_CODE_MODEL)
+        list(APPEND ${OUT_VAR} "-mcmodel=${STRIDE_CODE_MODEL}")
+    endif()
+
+    if(STRIDE_EMIT_ALL_FUNCTIONS)
+        list(APPEND ${OUT_VAR} "--emit-all-functions")
+    endif()
+
+    # Pass configuration-dependent debug and optimization flags
+    list(APPEND ${OUT_VAR}
+        "$<$<CONFIG:Debug>:-g>"
+        "$<$<CONFIG:Debug>:-O0>"
+        "$<$<CONFIG:Debug>:--build-type=Debug>"
+        "$<$<CONFIG:RelWithDebInfo>:-gline-tables-only>"
+        "$<$<CONFIG:RelWithDebInfo>:-O2>"
+        "$<$<CONFIG:RelWithDebInfo>:--build-type=RelWithDebInfo>"
+        "$<$<CONFIG:Release>:-O3>"
+        "$<$<CONFIG:Release>:--build-type=Release>"
+        "$<$<CONFIG:MinSizeRel>:-Os>"
+        "$<$<CONFIG:MinSizeRel>:--build-type=Release>"
+    )
+
+    if(STRIDE_COMPILER_ARGS)
+        list(APPEND ${OUT_VAR} ${STRIDE_COMPILER_ARGS})
+    endif()
+    if(STRIDE_COPTS)
+        list(APPEND ${OUT_VAR} ${STRIDE_COPTS})
+    endif()
+endmacro()
+
 function(stride_target_sources TARGET VISIBILITY)
     cmake_parse_arguments(STRIDE_ARG "NO_DEFAULT_LIBS" "" "LINK_LIBRARIES;PLATFORM_LIBS" ${ARGN})
     set(SOURCES ${STRIDE_ARG_UNPARSED_ARGUMENTS})
@@ -32,42 +91,7 @@ function(stride_target_sources TARGET VISIBILITY)
         set(OBJ_EXT ".o")
     endif()
 
-    # Deduce Target Triple & CPU for cross-compilation if not explicitly set
-    set(COMPILER_ARGS "")
-
-    if(STRIDE_TARGET_TRIPLE)
-        list(APPEND COMPILER_ARGS "--target=${STRIDE_TARGET_TRIPLE}")
-    elseif(CMAKE_CROSSCOMPILING)
-        if(CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m0" OR CMAKE_SYSTEM_PROCESSOR MATCHES "armv6-m")
-            list(APPEND COMPILER_ARGS "--target=thumbv6m-none-eabi")
-        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m3" OR CMAKE_SYSTEM_PROCESSOR MATCHES "armv7-m")
-            list(APPEND COMPILER_ARGS "--target=thumbv7m-none-eabi")
-        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m4" OR CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m7")
-            list(APPEND COMPILER_ARGS "--target=thumbv7em-none-eabi")
-        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "cortex-m33" OR CMAKE_SYSTEM_PROCESSOR MATCHES "armv8-m")
-            list(APPEND COMPILER_ARGS "--target=thumbv8m.main-none-eabi")
-        elseif(CMAKE_SYSTEM_PROCESSOR)
-            list(APPEND COMPILER_ARGS "--target=arm-none-eabi")
-        endif()
-    endif()
-
-    if(STRIDE_TARGET_CPU)
-        list(APPEND COMPILER_ARGS "-mcpu=${STRIDE_TARGET_CPU}")
-    elseif(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR)
-        list(APPEND COMPILER_ARGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR}")
-    endif()
-
-    if(STRIDE_RELOC_MODEL)
-        list(APPEND COMPILER_ARGS "-f${STRIDE_RELOC_MODEL}")
-    endif()
-
-    if(STRIDE_CODE_MODEL)
-        list(APPEND COMPILER_ARGS "-mcmodel=${STRIDE_CODE_MODEL}")
-    endif()
-
-    if(STRIDE_EMIT_ALL_FUNCTIONS)
-        list(APPEND COMPILER_ARGS "--emit-all-functions")
-    endif()
+    _stride_get_compiler_args(COMPILER_ARGS)
 
     set(SRC_PATHS "")
     foreach(STRIDE_SRC IN LISTS SOURCES)
@@ -257,6 +281,8 @@ function(stride_add_library LIB_NAME)
     set(GEN_INC_DIR "${GEN_DIR}/include")
     file(MAKE_DIRECTORY "${GEN_INC_DIR}")
 
+    _stride_get_compiler_args(COMPILER_ARGS)
+
     set(SRC_PATHS "")
     foreach(STRIDE_SRC IN LISTS SOURCES)
         get_filename_component(SRC_PATH "${STRIDE_SRC}" ABSOLUTE)
@@ -272,6 +298,7 @@ function(stride_add_library LIB_NAME)
                 -c ${SRC_PATHS}
                 -o "${OUT_OBJ}"
                 --emit-header "${OUT_HDR}"
+                ${COMPILER_ARGS}
         DEPENDS ${SRC_PATHS} ${STRIDE_COMPILER_DEP}
         COMMENT "Compiling Stride library ${LIB_NAME} -> ${LIB_NAME}${OBJ_EXT} / ${LIB_NAME}.h"
         VERBATIM

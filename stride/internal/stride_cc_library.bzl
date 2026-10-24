@@ -49,6 +49,16 @@ def _stride_cc_library_impl(ctx):
         fail("No Stride toolchain or compiler found.")
 
     target_args = _deduce_target_args(ctx, cc_toolchain)
+
+    # Deduce compilation mode (dbg, opt, fastbuild) and forward debug/optimization options
+    config_args = []
+    compilation_mode = ctx.var.get("COMPILATION_MODE", "fastbuild")
+    if compilation_mode == "dbg" or cc_common.is_enabled(feature_configuration = feature_configuration, feature_name = "dbg"):
+        config_args.extend(["-g", "-O0", "--build-type=Debug"])
+    elif compilation_mode == "opt" or cc_common.is_enabled(feature_configuration = feature_configuration, feature_name = "opt"):
+        config_args.extend(["-O3", "--build-type=Release"])
+    elif compilation_mode == "fastbuild":
+        config_args.extend(["-O2", "--build-type=RelWithDebInfo"])
     
     # Declare single unified output object file and header file
     obj_file = ctx.actions.declare_file(ctx.label.name + "_gen/" + ctx.label.name + ".o")
@@ -65,6 +75,7 @@ def _stride_cc_library_impl(ctx):
 
     args.add_all(target_args)
     args.add_all(default_copts)
+    args.add_all(config_args)
     args.add_all(ctx.attr.copts)
 
     # Include search paths

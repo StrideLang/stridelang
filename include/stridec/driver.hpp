@@ -48,6 +48,14 @@ struct StridecOptions {
   std::string arduinoAuthor = "Stride";
   std::string arduinoVersion = "1.0.0";
   bool emitAllFunctions = false;
+  bool debugInfo = false;
+  std::string debugInfoLevel = "none";
+  int optimizationLevel = -1;
+  std::string buildType;
+  bool vectorize = false;
+  bool noVectorize = false;
+  bool unrollLoops = false;
+  bool noUnrollLoops = false;
   bool verbose = false;
   bool showHelp = false;
   bool showVersion = false;
