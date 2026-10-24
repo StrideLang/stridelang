@@ -41,6 +41,14 @@ struct StridecOptions {
   std::string strideRoot;
   std::vector<std::string> includeDirs;
   bool emitAllFunctions = false;
+  bool debugInfo = false;
+  std::string debugInfoLevel = "none";
+  int optimizationLevel = -1;
+  std::string buildType;
+  bool vectorize = false;
+  bool noVectorize = false;
+  bool unrollLoops = false;
+  bool noUnrollLoops = false;
   bool verbose = false;
   bool showHelp = false;
   bool showVersion = false;

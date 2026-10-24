@@ -53,6 +53,12 @@ void printHelp(std::ostream &os, const char *progName) {
      << "  -femit-all-functions,                Force code generation for all root-level functions\n"
      << "  --emit-all-functions, --compile-functions\n"
      << "  -O0, -O1, -O2, -O3, -Os, -Oz         Optimization level\n"
+     << "  -g, -g2, -g3                         Generate full DWARF debug information\n"
+     << "  -gline-tables-only, -g1              Generate line table debug information only\n"
+     << "  -g0                                  Disable debug information\n"
+     << "  -fvectorize, -fno-vectorize          Enable / disable vectorization\n"
+     << "  -funroll-loops, -fno-unroll-loops    Enable / disable loop unrolling\n"
+     << "  --build-type=<type>                  Build preset: debug, release, relwithdebinfo\n"
      << "  -c                                   Compile to object file (do not link)\n\n"
      << "Output & Header Options:\n"
      << "  -o <file>                            Output object file (.o / .obj)\n"
@@ -97,6 +103,35 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
     } else if (arg == "-c") {
       // Standard clang compile flag
       continue;
+    } else if (arg == "-g" || arg == "-g2" || arg == "-g3") {
+      opts.debugInfo = true;
+      opts.debugInfoLevel = "full";
+    } else if (arg == "-gline-tables-only" || arg == "-g1") {
+      opts.debugInfo = true;
+      opts.debugInfoLevel = "line-tables-only";
+    } else if (arg == "-g0") {
+      opts.debugInfo = false;
+      opts.debugInfoLevel = "none";
+    } else if (arg == "-fvectorize") {
+      opts.vectorize = true;
+      opts.noVectorize = false;
+    } else if (arg == "-fno-vectorize") {
+      opts.noVectorize = true;
+      opts.vectorize = false;
+    } else if (arg == "-funroll-loops") {
+      opts.unrollLoops = true;
+      opts.noUnrollLoops = false;
+    } else if (arg == "-fno-unroll-loops") {
+      opts.noUnrollLoops = true;
+      opts.unrollLoops = false;
+    } else if (arg == "-O0") {
+      opts.optimizationLevel = 0;
+    } else if (arg == "-O1") {
+      opts.optimizationLevel = 1;
+    } else if (arg == "-O2" || arg == "-Os" || arg == "-Oz") {
+      opts.optimizationLevel = 2;
+    } else if (arg == "-O3") {
+      opts.optimizationLevel = 3;
     } else if (arg == "-fPIC" || arg == "-fpic" || arg == "-fPIE" || arg == "-fpie") {
       opts.relocModel = "pic";
     } else if (arg == "-fno-PIC" || arg == "-fno-pic" || arg == "-fno-PIE" || arg == "-fno-pie") {
@@ -111,6 +146,9 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
                arg == "-compile-functions" || arg == "--compile-functions") {
       opts.emitAllFunctions = true;
     } else if (arg.rfind("-O", 0) == 0) {
+      continue;
+    } else if (parseOptionWithVal(arg, i, args, "--build-type", opts.buildType) ||
+               parseOptionWithVal(arg, i, args, "-build-type", opts.buildType)) {
       continue;
     } else if (parseOptionWithVal(arg, i, args, "-o", opts.outputFile)) {
       continue;
@@ -206,6 +244,35 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
   strd::StrideEnvironment env(opts.strideRoot);
   for (const auto &inc : opts.includeDirs) {
     env.addIncludePath(inc);
+  }
+
+  if (!opts.buildType.empty()) {
+    std::string bt = opts.buildType;
+    for (auto &c : bt) {
+      c = static_cast<char>(std::tolower(c));
+    }
+    if (bt == "debug") {
+      env.setBuildType(strd::BuildType::Debug);
+    } else if (bt == "release") {
+      env.setBuildType(strd::BuildType::Release);
+    } else if (bt == "relwithdebinfo") {
+      env.setBuildType(strd::BuildType::RelWithDebInfo);
+    } else if (bt == "minsizerel") {
+      env.setBuildType(strd::BuildType::MinSizeRel);
+    }
+  }
+
+  if (opts.debugInfo) {
+    env.enableDebugInfo(true);
+    if (opts.debugInfoLevel == "line-tables-only") {
+      env.setDebugInfoLevel(strd::DebugInfoLevel::LineTablesOnly);
+    } else {
+      env.setDebugInfoLevel(strd::DebugInfoLevel::Full);
+    }
+  }
+
+  if (opts.optimizationLevel >= 0) {
+    env.setOptimizationLevel(opts.optimizationLevel);
   }
 
   if (opts.verbose) {
