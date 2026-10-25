@@ -48,6 +48,8 @@ struct StridecOptions {
   std::string arduinoAuthor = "Stride";
   std::string arduinoVersion = "1.0.0";
   bool emitAllFunctions = false;
+  // Print conversions that can lose data or change values as warnings
+  bool reportConversions = false;
   bool debugInfo = false;
   std::string debugInfoLevel = "none";
   int optimizationLevel = -1;

@@ -58,6 +58,7 @@ void printHelp(std::ostream &os, const char *progName) {
      << "  -fPIC, -fno-PIC                      Generate position-independent code\n"
      << "  -fropi, -frwpi                       Read-only / read-write position independence\n"
      << "  -mcmodel=<model>                     Code model: tiny, small, kernel, medium, large\n"
+     << "  -Wconversion, --report-conversions   Warn about conversions that can lose data\n"
      << "  -femit-all-functions,                Force code generation for all root-level functions\n"
      << "  --emit-all-functions, --compile-functions\n"
      << "  -O0, -O1, -O2, -O3, -Os, -Oz         Optimization level\n"
@@ -163,6 +164,8 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
       opts.relocModel = "rwpi";
     } else if (arg == "-fropi-rwpi") {
       opts.relocModel = "ropi-rwpi";
+    } else if (arg == "-Wconversion" || arg == "--report-conversions") {
+      opts.reportConversions = true;
     } else if (arg == "-femit-all-functions" || arg == "--emit-all-functions" ||
                arg == "-compile-functions" || arg == "--compile-functions") {
       opts.emitAllFunctions = true;
@@ -561,6 +564,19 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
   if (!ok) {
     err << "stridec: error: compilation failed\n";
     return 1;
+  }
+
+  if (opts.reportConversions) {
+    // file:line:column: warning: ... is the format editors parse
+    for (const auto &warning : env.getConversionWarnings()) {
+      err << warning.filename << ":" << warning.lineNumber;
+      if (warning.columnNumber > 0) {
+        err << ":" << warning.columnNumber;
+      }
+      err << ": warning: conversion from '" << warning.errorTokens[0]
+          << "' to '" << warning.errorTokens[1] << "' "
+          << warning.errorTokens[2] << " [-Wconversion]\n";
+    }
   }
 
   // 1. Emit C Header if requested
