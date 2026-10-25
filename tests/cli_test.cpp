@@ -11,7 +11,8 @@ namespace {
 
 std::string readFileContent(const std::string &path) {
   std::ifstream file(path);
-  if (!file) return "";
+  if (!file)
+    return "";
   std::string content((std::istreambuf_iterator<char>(file)),
                       std::istreambuf_iterator<char>());
   file.close();
@@ -20,7 +21,8 @@ std::string readFileContent(const std::string &path) {
 
 bool checkArMagic(const std::string &path) {
   std::ifstream f(path, std::ios::binary);
-  if (!f) return false;
+  if (!f)
+    return false;
   char magic[8] = {0};
   f.read(magic, 8);
   f.close();
@@ -85,41 +87,65 @@ TEST_F(StridecDriverTest, MissingOutputOptionsReturnsError) {
 }
 
 TEST_F(StridecDriverTest, NonExistentInputFileReturnsError) {
-  EXPECT_EQ(strd::runStridec({"non_existent_file.stride", "-o", "out.o"}, out, err), 1);
+  EXPECT_EQ(
+      strd::runStridec({"non_existent_file.stride", "-o", "out.o"}, out, err),
+      1);
   EXPECT_NE(err.str().find("no such file or directory"), std::string::npos);
 }
 
 TEST_F(StridecDriverTest, UnknownOptionReturnsError) {
   std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
-  EXPECT_EQ(strd::runStridec({"--non-existent-option", inputFile, "-o", "out.o"}, out, err), 1);
+  EXPECT_EQ(strd::runStridec(
+                {"--non-existent-option", inputFile, "-o", "out.o"}, out, err),
+            1);
   EXPECT_NE(err.str().find("unknown command-line option"), std::string::npos);
+}
+
+TEST_F(StridecDriverTest, EmptyArgumentsAreIgnored) {
+  std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
+  std::error_code ec;
+  std::filesystem::path tempDir =
+      std::filesystem::temp_directory_path(ec) / "stridec_empty_arg_test";
+  std::filesystem::create_directories(tempDir, ec);
+  std::string objPath = (tempDir / "sensor.o").string();
+  std::string headerPath = (tempDir / "sensor.h").string();
+
+  std::vector<std::string> args = {
+      "", "-c", "", inputFile, "", "-o", objPath, "", "--emit-header=" + headerPath, ""};
+
+  int result = strd::runStridec(args, out, err);
+  EXPECT_EQ(result, 0);
+  EXPECT_TRUE(std::filesystem::exists(objPath));
+  EXPECT_TRUE(std::filesystem::exists(headerPath));
+
+  std::filesystem::remove_all(tempDir, ec);
 }
 
 TEST_F(StridecDriverTest, CommandLineOptionParserVariations) {
   strd::StridecOptions opts;
   std::string errorMsg;
 
-  std::vector<std::string> args = {
-      "-c",
-      "--target=thumbv6m-none-eabi",
-      "-mcpu=cortex-m0plus",
-      "-mcmodel=small",
-      "-fPIC",
-      "-femit-all-functions",
-      "-I/custom/include",
-      "-isystem", "/system/include",
-      "--domain=SensorDSP",
-      "--emit-arduino-lib=/custom/arduino/lib",
-      "--arduino-name=MySensorLib",
-      "--arduino-arch=arm",
-      "--arduino-mcu=cortex-m0plus,cortex-m4",
-      "--arduino-author=StrideTeam",
-      "--arduino-version=2.1.0",
-      "-o", "build/sensor.o",
-      "--emit-header=build/sensor.h",
-      "input1.stride",
-      "input2.stride"
-  };
+  std::vector<std::string> args = {"-c",
+                                   "--target=thumbv6m-none-eabi",
+                                   "-mcpu=cortex-m0plus",
+                                   "-mcmodel=small",
+                                   "-fPIC",
+                                   "-femit-all-functions",
+                                   "-I/custom/include",
+                                   "-isystem",
+                                   "/system/include",
+                                   "--domain=SensorDSP",
+                                   "--emit-arduino-lib=/custom/arduino/lib",
+                                   "--arduino-name=MySensorLib",
+                                   "--arduino-arch=arm",
+                                   "--arduino-mcu=cortex-m0plus,cortex-m4",
+                                   "--arduino-author=StrideTeam",
+                                   "--arduino-version=2.1.0",
+                                   "-o",
+                                   "build/sensor.o",
+                                   "--emit-header=build/sensor.h",
+                                   "input1.stride",
+                                   "input2.stride"};
 
   ASSERT_TRUE(strd::parseCommandLine(args, opts, errorMsg));
   EXPECT_EQ(opts.targetTriple, "thumbv6m-none-eabi");
@@ -153,15 +179,14 @@ TEST_F(StridecDriverTest, EndToEndDriverExecution) {
   std::string objPath = (tempDir / "sensor.o").string();
   std::string headerPath = (tempDir / "sensor.h").string();
 
-  std::vector<std::string> args = {
-      "-c",
-      inputFile,
-      "-o", objPath,
-      "--emit-header=" + headerPath,
-      "--target=thumbv6m-none-eabi",
-      "-mcpu=cortex-m0plus",
-      "-v"
-  };
+  std::vector<std::string> args = {"-c",
+                                   inputFile,
+                                   "-o",
+                                   objPath,
+                                   "--emit-header=" + headerPath,
+                                   "--target=thumbv6m-none-eabi",
+                                   "-mcpu=cortex-m0plus",
+                                   "-v"};
 
   int result = strd::runStridec(args, out, err);
   EXPECT_EQ(result, 0);
@@ -183,15 +208,14 @@ TEST_F(StridecDriverTest, MultiFileUnifiedCompilation) {
   std::string objPath = (tempDir / "unified_output.o").string();
   std::string headerPath = (tempDir / "unified_output.h").string();
 
-  std::vector<std::string> args = {
-      "-c",
-      file1,
-      file2,
-      "-o", objPath,
-      "--emit-header=" + headerPath,
-      "--emit-all-functions",
-      "-v"
-  };
+  std::vector<std::string> args = {"-c",
+                                   file1,
+                                   file2,
+                                   "-o",
+                                   objPath,
+                                   "--emit-header=" + headerPath,
+                                   "--emit-all-functions",
+                                   "-v"};
 
   int result = strd::runStridec(args, out, err);
   EXPECT_EQ(result, 0);
@@ -216,14 +240,13 @@ TEST_F(StridecDriverTest, StandaloneFunctionLibraryWithFlag) {
   std::string objPath = (tempDir / "math_lib.o").string();
   std::string headerPath = (tempDir / "math_lib.h").string();
 
-  std::vector<std::string> args = {
-      "-c",
-      mathFile,
-      "-o", objPath,
-      "--emit-header=" + headerPath,
-      "--emit-all-functions",
-      "-v"
-  };
+  std::vector<std::string> args = {"-c",
+                                   mathFile,
+                                   "-o",
+                                   objPath,
+                                   "--emit-header=" + headerPath,
+                                   "--emit-all-functions",
+                                   "-v"};
 
   int result = strd::runStridec(args, out, err);
   EXPECT_EQ(result, 0);
@@ -248,14 +271,13 @@ TEST_F(StridecDriverTest, DirectStaticArchiveOutput) {
   std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
   std::string archivePath = (tempDir / "libSensorDSP.a").string();
 
-  std::vector<std::string> args = {
-      "-c",
-      inputFile,
-      "-o", archivePath,
-      "--target=thumbv6m-none-eabi",
-      "-mcpu=cortex-m0plus",
-      "-v"
-  };
+  std::vector<std::string> args = {"-c",
+                                   inputFile,
+                                   "-o",
+                                   archivePath,
+                                   "--target=thumbv6m-none-eabi",
+                                   "-mcpu=cortex-m0plus",
+                                   "-v"};
 
   int result = strd::runStridec(args, out, err);
   EXPECT_EQ(result, 0);
@@ -278,18 +300,15 @@ TEST_F(StridecDriverTest, ArduinoLibraryBundleDefaultArm) {
   std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
   std::string libDir = (tempDir / "SensorDSP").string();
 
-  std::vector<std::string> args = {
-      "--emit-arduino-lib=" + libDir,
-      "--arduino-name=SensorDSP",
-      inputFile,
-      "-v"
-  };
+  std::vector<std::string> args = {"--emit-arduino-lib=" + libDir,
+                                   "--arduino-name=SensorDSP", inputFile, "-v"};
 
   int result = strd::runStridec(args, out, err);
   EXPECT_EQ(result, 0);
 
   // 1. Verify library.properties
-  std::string propsPath = (tempDir / "SensorDSP" / "library.properties").string();
+  std::string propsPath =
+      (tempDir / "SensorDSP" / "library.properties").string();
   EXPECT_TRUE(std::filesystem::exists(propsPath));
   std::string propsContent = readFileContent(propsPath);
   EXPECT_NE(propsContent.find("name=SensorDSP"), std::string::npos);
@@ -300,33 +319,39 @@ TEST_F(StridecDriverTest, ArduinoLibraryBundleDefaultArm) {
   EXPECT_NE(propsContent.find("includes=SensorDSP.h"), std::string::npos);
 
   // 2. Verify C header & C++ compatibility stub
-  std::string headerPath = (tempDir / "SensorDSP" / "src" / "SensorDSP.h").string();
+  std::string headerPath =
+      (tempDir / "SensorDSP" / "src" / "SensorDSP.h").string();
   EXPECT_TRUE(std::filesystem::exists(headerPath));
   std::string headerContent = readFileContent(headerPath);
   EXPECT_NE(headerContent.find("SensorDSP_process"), std::string::npos);
 
-  std::string stubPath = (tempDir / "SensorDSP" / "src" / "SensorDSP.cpp").string();
+  std::string stubPath =
+      (tempDir / "SensorDSP" / "src" / "SensorDSP.cpp").string();
   EXPECT_TRUE(std::filesystem::exists(stubPath));
   std::string stubContent = readFileContent(stubPath);
   EXPECT_NE(stubContent.find("#include \"SensorDSP.h\""), std::string::npos);
 
   // 3. Verify Example Sketch
-  std::string demoPath = (tempDir / "SensorDSP" / "examples" / "SensorDSPDemo" / "SensorDSPDemo.ino").string();
+  std::string demoPath = (tempDir / "SensorDSP" / "examples" / "SensorDSPDemo" /
+                          "SensorDSPDemo.ino")
+                             .string();
   EXPECT_TRUE(std::filesystem::exists(demoPath));
   std::string demoContent = readFileContent(demoPath);
   EXPECT_NE(demoContent.find("#include <SensorDSP.h>"), std::string::npos);
 
   // 4. Verify all default ARM Cortex static archives
   std::vector<std::string> expectedMcus = {
-      "cortex-m0plus", "cortex-m3", "cortex-m4", "cortex-m7", "cortex-m33"
-  };
+      "cortex-m0plus", "cortex-m3", "cortex-m4", "cortex-m7", "cortex-m33"};
   for (const auto &mcu : expectedMcus) {
-    std::filesystem::path archFile = tempDir / "SensorDSP" / "src" / mcu / "libSensorDSP.a";
-    EXPECT_TRUE(std::filesystem::exists(archFile)) << "Missing expected archive for MCU: " << mcu;
+    std::filesystem::path archFile =
+        tempDir / "SensorDSP" / "src" / mcu / "libSensorDSP.a";
+    EXPECT_TRUE(std::filesystem::exists(archFile))
+        << "Missing expected archive for MCU: " << mcu;
     EXPECT_GT(std::filesystem::file_size(archFile), 0);
 
     // Validate ar magic
-    EXPECT_TRUE(checkArMagic(archFile.string())) << "Invalid ar magic for MCU: " << mcu;
+    EXPECT_TRUE(checkArMagic(archFile.string()))
+        << "Invalid ar magic for MCU: " << mcu;
   }
 
   std::filesystem::remove_all(tempDir, ec);
@@ -343,19 +368,16 @@ TEST_F(StridecDriverTest, ArduinoLibraryBundleTargetedMcuAndCustomName) {
   std::string libDir = (tempDir / "CustomFilter").string();
 
   std::vector<std::string> args = {
-      "--emit-arduino-lib=" + libDir,
-      "--arduino-name=CustomFilter",
-      "--arduino-mcu=cortex-m4",
-      "--arduino-author=AudioLab",
-      "--arduino-version=1.2.3",
-      inputFile
-  };
+      "--emit-arduino-lib=" + libDir, "--arduino-name=CustomFilter",
+      "--arduino-mcu=cortex-m4",      "--arduino-author=AudioLab",
+      "--arduino-version=1.2.3",      inputFile};
 
   int result = strd::runStridec(args, out, err);
   EXPECT_EQ(result, 0);
 
   // 1. Verify library.properties
-  std::string propsPath = (tempDir / "CustomFilter" / "library.properties").string();
+  std::string propsPath =
+      (tempDir / "CustomFilter" / "library.properties").string();
   EXPECT_TRUE(std::filesystem::exists(propsPath));
   std::string propsContent = readFileContent(propsPath);
   EXPECT_NE(propsContent.find("name=CustomFilter"), std::string::npos);
@@ -364,23 +386,26 @@ TEST_F(StridecDriverTest, ArduinoLibraryBundleTargetedMcuAndCustomName) {
   EXPECT_NE(propsContent.find("ldflags=-lCustomFilter -lm"), std::string::npos);
 
   // 2. Verify cortex-m4 archive exists
-  std::filesystem::path m4Archive = tempDir / "CustomFilter" / "src" / "cortex-m4" / "libCustomFilter.a";
+  std::filesystem::path m4Archive =
+      tempDir / "CustomFilter" / "src" / "cortex-m4" / "libCustomFilter.a";
   EXPECT_TRUE(std::filesystem::exists(m4Archive));
   EXPECT_GT(std::filesystem::file_size(m4Archive), 0);
 
   // 3. Verify other MCUs were NOT generated
-  std::filesystem::path m0Archive = tempDir / "CustomFilter" / "src" / "cortex-m0plus";
+  std::filesystem::path m0Archive =
+      tempDir / "CustomFilter" / "src" / "cortex-m0plus";
   EXPECT_FALSE(std::filesystem::exists(m0Archive));
 
   std::filesystem::remove_all(tempDir, ec);
-
+}
 
 TEST_F(StridecDriverTest, DebugAndOptimizationFlags) {
   strd::StridecOptions opts;
   std::string errorMsg;
 
   // -g flag (full debug info)
-  EXPECT_TRUE(strd::parseCommandLine({"-g", "-O0", "--build-type=debug"}, opts, errorMsg));
+  EXPECT_TRUE(strd::parseCommandLine({"-g", "-O0", "--build-type=debug"}, opts,
+                                     errorMsg));
   EXPECT_TRUE(opts.debugInfo);
   EXPECT_EQ(opts.debugInfoLevel, "full");
   EXPECT_EQ(opts.optimizationLevel, 0);
@@ -388,7 +413,8 @@ TEST_F(StridecDriverTest, DebugAndOptimizationFlags) {
 
   // -gline-tables-only
   opts = strd::StridecOptions();
-  EXPECT_TRUE(strd::parseCommandLine({"-gline-tables-only", "-O2"}, opts, errorMsg));
+  EXPECT_TRUE(
+      strd::parseCommandLine({"-gline-tables-only", "-O2"}, opts, errorMsg));
   EXPECT_TRUE(opts.debugInfo);
   EXPECT_EQ(opts.debugInfoLevel, "line-tables-only");
   EXPECT_EQ(opts.optimizationLevel, 2);
@@ -402,14 +428,16 @@ TEST_F(StridecDriverTest, DebugAndOptimizationFlags) {
 
   // Vectorization and loop unrolling flags
   opts = strd::StridecOptions();
-  EXPECT_TRUE(strd::parseCommandLine({"-fvectorize", "-funroll-loops"}, opts, errorMsg));
+  EXPECT_TRUE(strd::parseCommandLine({"-fvectorize", "-funroll-loops"}, opts,
+                                     errorMsg));
   EXPECT_TRUE(opts.vectorize);
   EXPECT_FALSE(opts.noVectorize);
   EXPECT_TRUE(opts.unrollLoops);
   EXPECT_FALSE(opts.noUnrollLoops);
 
   opts = strd::StridecOptions();
-  EXPECT_TRUE(strd::parseCommandLine({"-fno-vectorize", "-fno-unroll-loops"}, opts, errorMsg));
+  EXPECT_TRUE(strd::parseCommandLine({"-fno-vectorize", "-fno-unroll-loops"},
+                                     opts, errorMsg));
   EXPECT_TRUE(opts.noVectorize);
   EXPECT_FALSE(opts.vectorize);
   EXPECT_TRUE(opts.noUnrollLoops);

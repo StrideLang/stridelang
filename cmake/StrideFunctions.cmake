@@ -127,6 +127,7 @@ function(stride_target_sources TARGET VISIBILITY)
         ${POST_COMMANDS}
         DEPENDS ${SRC_PATHS} ${STRIDE_COMPILER_DEP}
         COMMENT "Compiling Stride sources -> ${TARGET}${OBJ_EXT} / ${SRC_BASE}.h"
+        COMMAND_EXPAND_LISTS
         VERBATIM
     )
 
@@ -301,6 +302,7 @@ function(stride_add_library LIB_NAME)
                 ${COMPILER_ARGS}
         DEPENDS ${SRC_PATHS} ${STRIDE_COMPILER_DEP}
         COMMENT "Compiling Stride library ${LIB_NAME} -> ${LIB_NAME}${OBJ_EXT} / ${LIB_NAME}.h"
+        COMMAND_EXPAND_LISTS
         VERBATIM
     )
 

@@ -109,6 +109,9 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
 
   for (size_t i = 0; i < args.size(); ++i) {
     const std::string &arg = args[i];
+    if (arg.empty()) {
+      continue;
+    }
 
     if (arg == "-h" || arg == "--help" || arg == "-help") {
       opts.showHelp = true;
