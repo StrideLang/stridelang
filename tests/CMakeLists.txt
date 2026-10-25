@@ -47,3 +47,6 @@ add_test(
                         "-DSTRIDE_COMPILER_BIN=$<TARGET_FILE:stridec>"
         --test-command test_dsp_firmware
 )
+
+set(STRIDE_CMAKE_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
+add_subdirectory("data/cmake_test_project/")
