@@ -213,7 +213,7 @@ cmake --build build --config Debug
 
 | CMake Option | Description |
 | :--- | :--- |
-| `-DSTRIDE_PREBUILT_BUILD_DIR=<path>` | Path to an existing build directory containing compiled Stride (`StrideJit`, `StrideParser`, `StrideUtils`, `StrideCodegen`) and LLVM static libraries. |
+| `-DSTRIDE_PREBUILT_BUILD_DIR=<path>` | Path to an existing build directory containing compiled Stride (`StrideJit`, `StrideParser`, `StrideUtils`, `StrideGen`) and LLVM static libraries. |
 | `-DSTRIDE_SRC_DIR=<path>` | (Optional) Path to the root `stridejit` source repository containing `include/stride/` headers (defaults to `../stridejit` or `../../external/stridejit`). |
 | `-DSTRIDE_USE_SYSTEM_DEPS=ON` | Prefer finding an already installed `StrideJit` package via `find_package(StrideJit)`. |
 

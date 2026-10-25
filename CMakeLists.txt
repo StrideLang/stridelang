@@ -20,8 +20,8 @@ if (NOT TARGET StrideJit)
             if (NOT TARGET StrideUtils)
                 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../strideutils" strideutils_build)
             endif()
-            if (NOT TARGET StrideCodegen)
-                add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../codegen" codegen_build)
+            if (NOT TARGET StrideGen)
+                add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../stridegen" stridegen_build)
             endif()
             if (NOT TARGET StrideJit)
                 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../stridejit" stridejit_build)
@@ -31,7 +31,7 @@ if (NOT TARGET StrideJit)
             find_package(StrideJit CONFIG REQUIRED)
             find_package(StrideParser CONFIG REQUIRED)
             find_package(StrideUtils CONFIG REQUIRED)
-            find_package(StrideCodegen CONFIG REQUIRED)
+            find_package(StrideGen CONFIG REQUIRED)
         endif()
     endif()
 endif()
@@ -49,7 +49,7 @@ target_link_libraries(stridec_driver PUBLIC
     StrideJit
     StrideParser
     StrideUtils
-    StrideCodegen
+    StrideGen
 )
 
 add_executable(stridec
