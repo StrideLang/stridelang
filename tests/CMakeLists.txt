@@ -14,6 +14,7 @@ endif()
 
 # Unit tests executable (runs in-process, deterministic, fast)
 add_executable(stridelang_tests
+    main.cpp
     stridec_test.cpp
     cli_test.cpp
     cross_compile_test.cpp
@@ -26,7 +27,7 @@ target_link_libraries(stridelang_tests PRIVATE
     StrideUtils
     StrideCodegen
     gtest
-    gtest_main
+
 )
 
 target_compile_definitions(stridelang_tests PRIVATE
