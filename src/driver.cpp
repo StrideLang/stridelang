@@ -81,6 +81,12 @@ void printHelp(std::ostream &os, const char *progName) {
      << "  --arduino-mcu=<mcus>                 Comma-separated list of target MCUs (e.g. cortex-m0plus,cortex-m4)\n"
      << "  --arduino-author=<author>            Author name for library.properties (default: Stride)\n"
      << "  --arduino-version=<ver>              Library version for library.properties (default: 1.0.0)\n\n"
+     << "Feature Toggle Options:\n"
+     << "  -D <name>, -D<name>                  Enable feature or variant (e.g. -D Audio, -D Pico::RT2030)\n"
+     << "  --feature <name>, --feature=<name>   Enable feature or variant\n"
+     << "  --features <list>, --features=<list> Enable comma-separated list of features\n"
+     << "  --no-feature <name>                  Explicitly disable feature or variant\n"
+     << "  --no-default-features                Disable declared default features\n\n"
      << "Include & Path Options:\n"
      << "  -I <dir>, -I<dir>                    Add directory to .stride include search path\n"
      << "  -isystem <dir>                       Add system include directory\n"
@@ -219,6 +225,34 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
     } else if (parseOptionWithVal(arg, i, args, "--target-features", opts.targetFeatures)) {
       continue;
     } else if (parseOptionWithVal(arg, i, args, "--strideroot", opts.strideRoot)) {
+      continue;
+    } else if (arg == "--no-default-features") {
+      opts.noDefaultFeatures = true;
+      continue;
+    } else if (arg.rfind("-D", 0) == 0) {
+      if (arg.length() > 2) {
+        opts.featureToggles.push_back(arg.substr(2));
+      } else if (i + 1 < args.size()) {
+        opts.featureToggles.push_back(args[++i]);
+      } else {
+        errorMessage = "error: -D requires an argument";
+        return false;
+      }
+      continue;
+    } else if (std::string featVal; parseOptionWithVal(arg, i, args, "--feature", featVal)) {
+      opts.featureToggles.push_back(featVal);
+      continue;
+    } else if (std::string featsVal; parseOptionWithVal(arg, i, args, "--features", featsVal)) {
+      std::stringstream ss(featsVal);
+      std::string item;
+      while (std::getline(ss, item, ',')) {
+        if (!item.empty()) {
+          opts.featureToggles.push_back(item);
+        }
+      }
+      continue;
+    } else if (std::string noFeatVal; parseOptionWithVal(arg, i, args, "--no-feature", noFeatVal)) {
+      opts.disabledFeatures.push_back(noFeatVal);
       continue;
     } else if (arg.rfind("-I", 0) == 0) {
       if (arg.length() > 2) {
@@ -513,6 +547,19 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
   strd::StrideEnvironment env(opts.strideRoot);
   for (const auto &inc : opts.includeDirs) {
     env.addIncludePath(inc);
+  }
+
+  if (opts.noDefaultFeatures) {
+    env.setUseDefaultFeatures(false);
+  }
+  for (const auto &feat : opts.disabledFeatures) {
+    env.disableFeature(feat);
+  }
+  for (const auto &feat : opts.featureToggles) {
+    if (llvm::Error featErr = env.enableFeature(feat)) {
+      err << "stridec: error: " << llvm::toString(std::move(featErr)) << "\n";
+      return 1;
+    }
   }
 
   if (!opts.buildType.empty()) {

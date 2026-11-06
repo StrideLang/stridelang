@@ -40,6 +40,9 @@ struct StridecOptions {
   std::string domainName;
   std::string strideRoot;
   std::vector<std::string> includeDirs;
+  std::vector<std::string> featureToggles;
+  std::vector<std::string> disabledFeatures;
+  bool noDefaultFeatures = false;
   // Arduino pre-built library options
   std::string arduinoLibDir;
   std::string arduinoLibName;
