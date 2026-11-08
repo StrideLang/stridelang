@@ -1,0 +1,69 @@
+name: Stride Toolchain CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            cpack_generator: "TGZ;DEB"
+          - os: windows-latest
+            cpack_generator: "ZIP"
+          - os: macos-latest
+            cpack_generator: "TGZ"
+
+    steps:
+      - name: Checkout stridelang repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout Stride dependencies (for standalone build)
+        uses: actions/checkout@v4
+        with:
+          repository: StrideLang/Stride
+          path: _stride_deps
+          submodules: recursive
+          fetch-depth: 1
+        continue-on-error: true
+
+      - name: Setup Ninja
+        uses: ashutoshvarma/setup-ninja@master
+        with:
+          version: 1.11.1
+
+      - name: Setup Linux LLVM & Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build flex bison llvm-18-dev libllvm18 clang-18
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSTRIDE_BUILD_TESTS=ON
+
+      - name: Build Toolchain Binaries (stride & stridec)
+        run: |
+          cmake --build build --config Release --target stride stridec
+
+      - name: Build & Run Unit Tests
+        run: |
+          cmake --build build --config Release --target stridelang_tests
+          ctest --test-dir build --output-on-failure -C Release
+
+      - name: Test CPack Packaging
+        working-directory: build
+        run: |
+          cpack -C Release -G "${{ matrix.cpack_generator }}"

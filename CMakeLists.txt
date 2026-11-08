@@ -36,7 +36,7 @@ if (NOT TARGET StrideJit)
     endif()
 endif()
 
-# Compiler Driver Library & Executable (stridec) --------------------------
+# Compiler Driver Library & Executables (stride & stridec) -----------------
 add_library(stridec_driver STATIC
     src/driver.cpp
 )
@@ -52,8 +52,22 @@ target_link_libraries(stridec_driver PUBLIC
     StrideGen
 )
 
+# Unified Stride CLI Front-End
+add_executable(stride
+    src/stride_main.cpp
+)
+
+target_link_libraries(stride PRIVATE
+    stridec_driver
+    StrideGen
+    StrideParser
+    StrideUtils
+    StrideJit
+)
+
+# Compatibility AOT Compiler Executable (stridec)
 add_executable(stridec
-    src/main.cpp
+    src/stridec_main.cpp
 )
 
 target_link_libraries(stridec PRIVATE
@@ -62,6 +76,7 @@ target_link_libraries(stridec PRIVATE
 
 # Exported Aliases
 add_executable(Stride::Compiler ALIAS stridec)
+add_executable(Stride::Toolchain ALIAS stride)
 if(TARGET StrideRuntime AND NOT TARGET Stride::Runtime)
     add_library(Stride::Runtime ALIAS StrideRuntime)
 endif()
@@ -77,12 +92,56 @@ write_basic_package_version_file(
     COMPATIBILITY SameMajorVersion
 )
 
-# Install executable target
-install(TARGETS stridec
+# Install executable targets
+install(TARGETS stride stridec
     EXPORT StrideTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT Compiler
 )
+
+# Standard Library & Systems (STRIDEROOT) Discovery & Packaging
+if (NOT STRIDEROOT)
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../strideroot")
+        set(STRIDEROOT "${CMAKE_CURRENT_SOURCE_DIR}/../strideroot" CACHE PATH "Path to strideroot")
+    elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../strideroot")
+        set(STRIDEROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../strideroot" CACHE PATH "Path to strideroot")
+    elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../../strideroot")
+        set(STRIDEROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../strideroot" CACHE PATH "Path to strideroot")
+    elseif (DEFINED ENV{STRIDEROOT})
+        set(STRIDEROOT "$ENV{STRIDEROOT}" CACHE PATH "Path to strideroot")
+    endif()
+endif()
+
+if (STRIDEROOT AND EXISTS "${STRIDEROOT}")
+    message(STATUS "stridelang: packaging standard library from ${STRIDEROOT}")
+    install(DIRECTORY "${STRIDEROOT}/"
+        DESTINATION strideroot
+        COMPONENT StandardLibrary
+        PATTERN ".git*" EXCLUDE
+    )
+endif()
+
+# Bundled VS Code Extension Packaging
+set(VSIX_FILE "")
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../vscode-stride-lang")
+    file(GLOB VSIX_CANDIDATES "${CMAKE_CURRENT_SOURCE_DIR}/../vscode-stride-lang/*.vsix")
+    if (VSIX_CANDIDATES)
+        list(GET VSIX_CANDIDATES 0 VSIX_FILE)
+    endif()
+elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../vscode-stride-lang")
+    file(GLOB VSIX_CANDIDATES "${CMAKE_CURRENT_SOURCE_DIR}/../../vscode-stride-lang/*.vsix")
+    if (VSIX_CANDIDATES)
+        list(GET VSIX_CANDIDATES 0 VSIX_FILE)
+    endif()
+endif()
+if (VSIX_FILE AND EXISTS "${VSIX_FILE}")
+    message(STATUS "stridelang: bundling VS Code extension ${VSIX_FILE}")
+    install(FILES "${VSIX_FILE}"
+        RENAME "stride-language.vsix"
+        DESTINATION vscode
+        COMPONENT VSCode
+    )
+endif()
 
 if(TARGET StrideRuntime)
     install(TARGETS StrideRuntime
@@ -123,6 +182,13 @@ install(FILES README.md
     COMPONENT Documentation
 )
 
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/doc")
+    install(DIRECTORY doc/
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}
+        COMPONENT Documentation
+    )
+endif()
+
 # Testing ------------------------------------------------------------------
 option(STRIDE_BUILD_TESTS "Build stridelang test suite" ON)
 
@@ -144,10 +210,17 @@ set(CPACK_PACKAGE_INSTALL_DIRECTORY "Stride")
 set(CPACK_STRIP_FILES TRUE)
 
 # Component grouping
-set(CPACK_COMPONENTS_ALL Compiler Development Examples Documentation)
-set(CPACK_COMPONENT_COMPILER_DISPLAY_NAME "Stride Compiler (stridec)")
-set(CPACK_COMPONENT_COMPILER_DESCRIPTION "Ahead-Of-Time compiler binary for Stride.")
+set(CPACK_COMPONENTS_ALL Compiler StandardLibrary VSCode Development Examples Documentation)
+set(CPACK_COMPONENT_COMPILER_DISPLAY_NAME "Stride Unified Toolchain (stride & stridec)")
+set(CPACK_COMPONENT_COMPILER_DESCRIPTION "Compiler, runtime driver, and toolchain manager binaries.")
 set(CPACK_COMPONENT_COMPILER_REQUIRED ON)
+
+set(CPACK_COMPONENT_STANDARDLIBRARY_DISPLAY_NAME "Stride Standard Library & Systems")
+set(CPACK_COMPONENT_STANDARDLIBRARY_DESCRIPTION "Core standard library, systems, and platforms (STRIDEROOT).")
+set(CPACK_COMPONENT_STANDARDLIBRARY_REQUIRED ON)
+
+set(CPACK_COMPONENT_VSCODE_DISPLAY_NAME "Visual Studio Code Extension")
+set(CPACK_COMPONENT_VSCODE_DESCRIPTION "Rich language support, LSP client, and debugging integration for VS Code.")
 
 set(CPACK_COMPONENT_DEVELOPMENT_DISPLAY_NAME "CMake Integration Modules")
 set(CPACK_COMPONENT_DEVELOPMENT_DESCRIPTION "CMake find_package(Stride) & stride_target_sources() integration.")
@@ -166,6 +239,33 @@ set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
 set(CPACK_NSIS_HELP_LINK "https://github.com/StrideLang/stridelang")
 set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/StrideLang/stridelang")
 
+set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [=[
+  WriteRegStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT" "$INSTDIR\strideroot"
+  WriteRegStr HKCU "Environment" "STRIDEROOT" "$INSTDIR\strideroot"
+  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+
+  ClearErrors
+  SearchPath $R0 "code.cmd"
+  IfErrors 0 InstallVsCodeExt
+  SearchPath $R0 "code.exe"
+  IfErrors 0 InstallVsCodeExt
+  IfFileExists "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" 0 SkipVsCodeExt
+  StrCpy $R0 "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd"
+
+InstallVsCodeExt:
+  IfFileExists "$INSTDIR\vscode\stride-language.vsix" 0 SkipVsCodeExt
+  DetailPrint "Installing Stride VS Code Extension..."
+  ExecWait '"$R0" --install-extension "$INSTDIR\vscode\stride-language.vsix" --force'
+
+SkipVsCodeExt:
+]=])
+
+set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [=[
+  DeleteRegValue HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT"
+  DeleteRegValue HKCU "Environment" "STRIDEROOT"
+  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+]=])
+
 # Package generators per platform
 if (WIN32)
     set(CPACK_GENERATOR "NSIS;ZIP")
@@ -176,4 +276,3 @@ else ()
 endif ()
 
 include(CPack)
-

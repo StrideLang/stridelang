@@ -2,11 +2,11 @@ load("//stride:defs.bzl", "stride_toolchain")
 
 package(default_visibility = ["//visibility:public"])
 
-# Stride AOT compiler driver binary
+# Stride AOT compiler driver binary (compatibility binary)
 cc_binary(
     name = "stridec",
     srcs = [
-        "src/main.cpp",
+        "src/stridec_main.cpp",
         "src/driver.cpp",
         "include/stridec/driver.hpp",
     ],
@@ -17,10 +17,26 @@ cc_binary(
     ],
 )
 
-# Default host toolchain for stridec
+# Unified Stride toolchain manager & driver binary
+cc_binary(
+    name = "stride",
+    srcs = [
+        "src/stride_main.cpp",
+        "src/driver.cpp",
+        "include/stridec/driver.hpp",
+    ],
+    includes = ["include"],
+    deps = [
+        # When building in an integrated Bazel workspace:
+        # "@stridejit//:stridejit",
+        # "@stridegen//:stridegen",
+    ],
+)
+
+# Default host toolchain for stride
 stride_toolchain(
     name = "default_stride_toolchain_impl",
-    stridec = ":stridec",
+    stridec = ":stride",
 )
 
 toolchain(

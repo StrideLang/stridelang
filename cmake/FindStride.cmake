@@ -1,7 +1,7 @@
 #[=======================================================================[.rst:
 FindStride
 ----------
-Finds the Stride Ahead-Of-Time compiler (stridec) and exports helper functions.
+Finds the Stride Ahead-Of-Time compiler (stridec / stride) and exports helper functions.
 
 Result Variables:
   STRIDE_FOUND                - True if the Stride compiler was found
@@ -10,23 +10,36 @@ Result Variables:
 
 Imported Targets:
   Stride::Compiler            - Executable target pointing to the compiler
+  Stride::Toolchain           - Executable target pointing to the unified toolchain binary
 
 Commands Provided:
   stride_target_sources       - Compiles .stride sources to .o + .h and attaches to target
   stride_add_library          - Creates a static or object library from .stride sources
 #]=======================================================================]
 
-# 1. Check if stridec target exists in current CMake build tree
+# 1. Check if stride / stridec target exists in current CMake build tree
 if(TARGET stridec)
     set(STRIDE_FOUND TRUE)
     set(STRIDE_COMPILER_EXECUTABLE "$<TARGET_FILE:stridec>")
     if(NOT TARGET Stride::Compiler)
         add_executable(Stride::Compiler ALIAS stridec)
     endif()
+    if(TARGET stride AND NOT TARGET Stride::Toolchain)
+        add_executable(Stride::Toolchain ALIAS stride)
+    endif()
+elseif(TARGET stride)
+    set(STRIDE_FOUND TRUE)
+    set(STRIDE_COMPILER_EXECUTABLE "$<TARGET_FILE:stride>")
+    if(NOT TARGET Stride::Compiler)
+        add_executable(Stride::Compiler ALIAS stride)
+    endif()
+    if(NOT TARGET Stride::Toolchain)
+        add_executable(Stride::Toolchain ALIAS stride)
+    endif()
 else()
     # 2. Search host paths and environment
     find_program(STRIDE_COMPILER_EXECUTABLE
-        NAMES stridec stride
+        NAMES stride stridec
         HINTS
             ${STRIDE_ROOT}
             ENV STRIDE_ROOT
@@ -82,10 +95,5 @@ if(NOT TARGET Stride::PlatformLibs)
     endif()
 endif()
 
-if(TARGET Stride::Runtime)
-    set_property(TARGET Stride::Runtime APPEND PROPERTY INTERFACE_LINK_LIBRARIES Stride::PlatformLibs)
-endif()
-
-if(STRIDE_FOUND)
-    include("${CMAKE_CURRENT_LIST_DIR}/StrideFunctions.cmake")
-endif()
+# 5. Include user-facing helper functions
+include("${CMAKE_CURRENT_LIST_DIR}/StrideFunctions.cmake")

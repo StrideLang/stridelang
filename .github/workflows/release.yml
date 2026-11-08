@@ -1,0 +1,136 @@
+name: Release Build & Cross-Platform Packaging
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-package:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            generator: "NSIS;ZIP"
+            artifact_pattern: "build/_CPack_Packages/**/NSIS/*.exe"
+          - os: macos-latest
+            generator: "TGZ;ZIP"
+            artifact_pattern: "build/*.tar.gz"
+          - os: ubuntu-latest
+            generator: "TGZ;DEB"
+            artifact_pattern: "build/*.deb"
+
+    steps:
+      - name: Checkout Stride Toolchain
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout Standard Library (strideroot)
+        uses: actions/checkout@v4
+        with:
+          repository: StrideLang/strideroot
+          path: strideroot
+          token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Setup Ninja
+        uses: ashutoshvarma/setup-ninja@master
+        with:
+          version: 1.11.1
+
+      - name: Setup NSIS (Windows only)
+        if: runner.os == 'Windows'
+        run: |
+          choco install nsis -y
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSTRIDE_BUILD_TESTS=OFF \
+            -DSTRIDEROOT="${{ github.workspace }}/strideroot"
+
+      - name: Build Stride Toolchain
+        run: |
+          cmake --build build --config Release --target stride stridec
+
+      - name: Create Packages with CPack
+        working-directory: build
+        run: |
+          cpack -C Release -G "${{ matrix.generator }}"
+
+      - name: Upload Installer Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            build/*.exe
+            build/*.zip
+            build/*.tar.gz
+            build/*.deb
+
+  build-vscode-extension:
+    name: Package VS Code Extension (.vsix)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout vscode-stride-lang
+        uses: actions/checkout@v4
+        with:
+          repository: StrideLang/vscode-stride-lang
+          path: vscode-stride-lang
+          token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Setup Node.js
+        if: hashFiles('vscode-stride-lang/package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Build .vsix
+        if: hashFiles('vscode-stride-lang/package.json') != ''
+        working-directory: vscode-stride-lang
+        run: |
+          npm ci || npm install
+          npx @vscode/vsce package --out stride-language.vsix
+
+      - name: Upload VSIX Artifact
+        if: hashFiles('vscode-stride-lang/package.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension
+          path: vscode-stride-lang/*.vsix
+
+  create-github-release:
+    name: Publish GitHub Release
+    needs: [build-and-package, build-vscode-extension]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Generate Checksums (SHA256)
+        working-directory: release-assets
+        run: |
+          find . -type f -exec sha256sum {} + > SHA256SUMS.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-assets/**/*.*
+            release-assets/SHA256SUMS.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
