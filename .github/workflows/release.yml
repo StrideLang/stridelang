@@ -56,6 +56,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DSTRIDE_BUILD_TESTS=OFF \
+            -DSTRIDE_OFFICIAL_RELEASE=ON \
             -DSTRIDEROOT="${{ github.workspace }}/strideroot"
 
       - name: Build Stride Toolchain

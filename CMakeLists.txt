@@ -4,6 +4,11 @@ project(stridelang VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(STRIDE_OFFICIAL_RELEASE "Build official release binaries with strictly contained library discovery" OFF)
+if (STRIDE_OFFICIAL_RELEASE)
+    add_compile_definitions(STRIDE_OFFICIAL_RELEASE=1)
+endif()
+
 # Dependencies -------------------------------------------------------------
 if (NOT TARGET StrideJit)
     # 1. Check for prebuilt binaries from an existing build directory
