@@ -260,3 +260,11 @@ cmake --build build --config Release
 cpack --config build/CPackConfig.cmake -C Release
 ```
 
+
+
+---
+
+## Documentation
+
+* **[Developer Workflow Guide](doc/developer_workflow.md)**: Instructions for developing on Stride alongside an installed release, setting up STRIDE_DEV, VS Code workspace isolation, and diagnostics.
+* **[Release Procedure Guide](doc/release_procedure.md)**: Step-by-step maintainer release workflow, cross-platform packaging with CPack, and CI/CD automation.
