@@ -266,6 +266,19 @@ cpack --config build/CPackConfig.cmake -C Release
 
 ## Documentation
 
-* **[Multi-Domain Computation, Shared Memory & System Connections](doc/multi_domain_computation.md)**: Architectural specification of the multi-domain execution model, lifecycle functions, shared memory between common ancestor domains, parameterized connection blueprints, and symmetrical native platform entities.
+### Language Specification
+
+* **[Syntax & AST Terminology](doc/language/syntax.md)**: Official syntactic constructs, casing rules, numeric literals, declaration kinds, streams, and functional invocations.
+* **[Data Types](doc/language/types.md)**: Fixed-width integer and float types, framework aliases (`Int`, `Real`, `Size`), promotion rules, lossy conversion reporting, and schema types.
+* **[Callables: Modules, Reactions & Loops](doc/language/callables.md)**: Stream-signature headers, state retention in modules, event triggering in reactions, short-circuit loops, and input/output sizing.
+* **[State Machines](doc/language/state_machines.md)**: Declarative hierarchical statecharts, discrete tick semantics, lifecycle hooks (`onEntry`, `onProcess`, `onExit`), guards, orthogonal regions, and history pseudo-states.
+* **[Buffer Entities & Window Framing](doc/language/buffers.md)**: Fixed-capacity ring stores, sliding windows, hopping rates, trigger modes, and zero-copy frame peeking into reactions.
+* **[Signal Bundles & Expansion](doc/language/bundles.md)**: Statically allocated bundle arrays, schema-driven property expansion, and the list rank resolution matrix ($R_0, R_1, R_2$).
+* **[Namespaces, Packages & Scopes](doc/language/namespaces_and_packages.md)**: Lexical scoping rules, domain-gated variable access, package root barrel files (`Name/` + `Name.stride`), conditional `@with` imports, and package security.
+* **[Systems, Frameworks, Platforms & Domains](doc/language/systems_and_platforms.md)**: Foundational taxonomy, hardware platforms, toolchain frameworks, computation domains, resource provisioning, and domain lifecycle functions (`<Domain>_load`, `_init`, `_process`, `_cleanup`).
+* **[Multi-Domain Computation, Shared Memory & Connections](doc/language/multi_domain_computation.md)**: Architectural specification of the multi-domain execution model, intrinsic shared memory between common ancestor domains, parameterized connection blueprints, and symmetrical native platform entities (`sourceEntities`/`destinationEntities`).
+
+### Toolchain & Maintainer Guides
+
 * **[Developer Workflow Guide](doc/developer_workflow.md)**: Instructions for developing on Stride alongside an installed release, setting up STRIDE_DEV, VS Code workspace isolation, and diagnostics.
 * **[Release Procedure Guide](doc/release_procedure.md)**: Step-by-step maintainer release workflow, cross-platform packaging with CPack, and CI/CD automation.
