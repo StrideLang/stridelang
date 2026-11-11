@@ -156,9 +156,9 @@ transition Move[Sq in [1, 2, 4, 8]] {
 }
 ```
 
-> **Range Syntax Note:**
+> * **Range Syntax Note:**
 > * **Generator Ranges (`..`):** Generator notation strictly uses double dots `..` to express inclusive bounds (`start..end` or `start..step..end`).
-> * **Slice / Index Ranges (`:`):** Array slicing and bundle indexing use colon notation `:` (e.g., `Signal[0:31]`).
+> * **Slice / Index Ranges (`:`):** Array slicing and array indexing use colon notation `:` (e.g., `Signal[0:31]`).
 
 ---
 
@@ -199,7 +199,7 @@ gain: 0.75
   ```stride
   Voices[0]
   ```
-* **Slice Access (`Target[start:end]`):** Uses bracket colon notation to address a contiguous slice or bundle of elements within an array entity.
+* **Slice Access (`Target[start:end]`):** Uses bracket colon notation to address a contiguous slice of elements within an array entity.
   ```stride
   Signals[0:7]
   ```
@@ -223,4 +223,4 @@ gain: 0.75
 | **Property** | `propertyName: Value` | Inside declarations or invocations | `rate: 44100`, `in: AudioIn` |
 | **Member Access** | `Target.member` | Dot-notation accessor | `Filter.out` |
 | **Index Access** | `Target[index]` | Single-element accessor | `Voices[0]` |
-| **Slice Access** | `Target[start:end]` | Bracket-notation bundle slice | `Signals[0:7]` |
+| **Slice Access** | `Target[start:end]` | Bracket-notation array slice | `Signals[0:7]` |

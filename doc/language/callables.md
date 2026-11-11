@@ -183,17 +183,17 @@ A subsequent stream attempting to write to the same constant produces a compile-
 
 ## 7. Invocation Conventions & Vectorized Broadcasting
 
-Stride callables support scalar invocation, bundling, and automatic parallel broadcasting:
+Stride callables support scalar invocation, array inputs, and automatic parallel broadcasting:
 
 ```stride
 # Standard 1:1 stream invocation
 In >> Filter(cutoff: 1000.0) >> Out;
 
-# Bundled inputs passed into a callable
+# Array inputs passed into a callable
 [ChannelA, ChannelB] >> DualFilter() >> Out;
 
 # Parallel broadcast across array slices
 AudioChannels[0:7] >> Filter[]() >> ProcessedChannels[0:7];
 ```
 
-When an array or bundle is passed into a callable expecting a scalar, the compiler automatically broadcasts the call, vectorizing execution across all elements.
+When an array is passed into a callable expecting a scalar, the compiler automatically broadcasts the call, vectorizing execution across all elements.
