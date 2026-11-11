@@ -266,5 +266,6 @@ cpack --config build/CPackConfig.cmake -C Release
 
 ## Documentation
 
+* **[Multi-Domain Computation, Shared Memory & System Connections](doc/multi_domain_computation.md)**: Architectural specification of the multi-domain execution model, lifecycle functions, shared memory between common ancestor domains, parameterized connection blueprints, and symmetrical native platform entities.
 * **[Developer Workflow Guide](doc/developer_workflow.md)**: Instructions for developing on Stride alongside an installed release, setting up STRIDE_DEV, VS Code workspace isolation, and diagnostics.
 * **[Release Procedure Guide](doc/release_procedure.md)**: Step-by-step maintainer release workflow, cross-platform packaging with CPack, and CI/CD automation.
