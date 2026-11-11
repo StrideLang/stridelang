@@ -273,10 +273,18 @@ cpack --config build/CPackConfig.cmake -C Release
 * **[Callables: Modules, Reactions & Loops](doc/language/callables.md)**: Stream-signature headers, state retention in modules, event triggering in reactions, short-circuit loops, and input/output sizing.
 * **[State Machines](doc/language/state_machines.md)**: Declarative hierarchical statecharts, discrete tick semantics, lifecycle hooks (`onEntry`, `onProcess`, `onExit`), guards, orthogonal regions, and history pseudo-states.
 * **[Buffer Entities & Window Framing](doc/language/buffers.md)**: Fixed-capacity ring stores, sliding windows, hopping rates, trigger modes, and zero-copy frame peeking into reactions.
+* **[Buffers & Frequency Domain Processing](doc/language/buffers_and_frequency_domain.md)**: Design specification for buffer storage, windowing, and block-based frequency domain processing.
+* **[Multi-Rate Processing Compilation](doc/language/multirate_compilation.md)**: Architecture, semantic analysis, and LLVM code generation for multi-rate signal streams and domains.
 * **[Signal Arrays & Expansion](doc/language/arrays.md)**: Statically allocated signal arrays, schema-driven property expansion, and the list rank resolution matrix ($R_0, R_1, R_2$).
 * **[Namespaces, Packages & Scopes](doc/language/namespaces_and_packages.md)**: Lexical scoping rules, domain-gated variable access, package root barrel files (`Name/` + `Name.stride`), conditional `@with` imports, and package security.
 * **[Systems, Frameworks, Platforms & Domains](doc/language/systems_and_platforms.md)**: Foundational taxonomy, hardware platforms, toolchain frameworks, computation domains, resource provisioning, and domain lifecycle functions (`<Domain>_load`, `_init`, `_process`, `_cleanup`).
 * **[Multi-Domain Computation, Shared Memory & Connections](doc/language/multi_domain_computation.md)**: Architectural specification of the multi-domain execution model, intrinsic shared memory between common ancestor domains, parameterized connection blueprints, and symmetrical native platform entities (`sourceEntities`/`destinationEntities`).
+
+### Compiler Architecture & Internals
+
+* **[Compilation & Execution Caching](doc/compiler/caching.md)**: Multi-stage caching infrastructure across AST parsing, IR generation, and JIT object cache.
+* **[Source-Level Debugging & DWARF Emission](doc/compiler/debugging.md)**: LLVM DIBuilder integration, lexical scope tracking, and source-level stepping in IDEs.
+* **[Unit Testing Architecture](doc/compiler/unit_testing.md)**: Comprehensive test suite conventions, execution harnesses, and verification patterns.
 
 ### Toolchain & Maintainer Guides
 
