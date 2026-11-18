@@ -1,9 +1,6 @@
-name: Release Build & Cross-Platform Packaging
+name: Release Build & Cross-Platform Packaging (Manual)
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:

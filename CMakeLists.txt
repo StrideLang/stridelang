@@ -142,6 +142,7 @@ if (NOT STRIDEROOT)
 endif()
 
 if (STRIDEROOT AND EXISTS "${STRIDEROOT}")
+    file(TO_CMAKE_PATH "${STRIDEROOT}" STRIDEROOT)
     message(STATUS "stridelang: packaging standard library from ${STRIDEROOT}")
     install(DIRECTORY "${STRIDEROOT}/"
         DESTINATION strideroot

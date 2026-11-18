@@ -60,16 +60,23 @@ ctest --test-dir build --output-on-failure
 ```
 
 ### Step 3: Commit Version Bump
-Commit your changes to `main`:
+Commit and push the version bump in `stridelang` (`main`), then update the `stridelang` submodule pointer and release notes in the parent `Stride` repository (`develop`):
 ```bash
-git add CMakeLists.txt
+# In stridelang/
+git add CMakeLists.txt MODULE.bazel README.md src/driver.cpp src/stride_main.cpp
 git commit -m "chore(release): bump version to 1.0.1"
 git push origin main
+
+# In Stride/
+git add stridelang notes/stride_1.0.1_release_notes.md
+git commit -m "chore(release): prepare 1.0.1 release"
+git push origin develop
 ```
 
-### Step 4: Tag and Push
-Create an annotated Git tag matching `v<version>` and push it:
+### Step 4: Tag and Push (Parent `Stride` Repository)
+Create a Git tag matching `v<version>` on the parent `Stride` repository and push it to trigger the release workflow:
 ```bash
+# In Stride/
 git tag v1.0.1
 git push origin v1.0.1
 ```
@@ -78,7 +85,7 @@ git push origin v1.0.1
 
 ## 3. What Happens Automatically in CI
 
-Once the `v*` tag is pushed to GitHub, [`.github/workflows/release.yml`](../.github/workflows/release.yml) executes the following tasks in parallel:
+Once the `v*` tag is pushed to `StrideLang/Stride`, `Stride/.github/workflows/release.yml` executes the following tasks:
 
 ```mermaid
 flowchart TD
