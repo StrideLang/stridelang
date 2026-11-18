@@ -52,8 +52,8 @@ Each write performs the following steps:
 5. Evaluates the configured trigger mode condition.
 
 > [!NOTE]
-> **Unit Input Size Invariant:**
-> On the input side, a buffer always accepts exactly **one sample per write** (input port size = 1), regardless of capacity. Consecutive streaming operations progressively accumulate into the ring buffer.
+> **Input Size by Mode:**
+> For ring-buffer modes (`Buffer::ModeSliding`, `Buffer::ModeFifo`, `Buffer::ModeOverlapAdd`), a buffer accepts **one sample per write** (input port size = 1), progressively accumulating into the ring. For `Buffer::ModeTable`, the buffer accepts a **full block of `capacity` elements** (or individual indexed slots via `TableBuf[i]`).
 
 ---
 
@@ -103,3 +103,29 @@ AudioBuffer.ready >> ComputeFFT(buffer: AudioBuffer) >> SpectralMagnitude;
 ```
 
 In the example above, `InBufPort.size` resolves to `AudioBuffer.frameSize` at compile time, passing the underlying pointer directly with zero heap or stack copy overhead.
+
+---
+
+## 5. Buffer Modes (Implemented and Planned)
+
+| Mode | Status | Storage Layout | Behavior |
+| :--- | :--- | :--- | :--- |
+| **`Buffer::ModeSliding`** | **Implemented** | `1 x capacity` (or `2 x capacity` mirrored when frames wrap) | Accumulates scalar samples into a rolling window and exposes the newest `frameSize` samples as a contiguous `.frame` peek. |
+| **`Buffer::ModeTable`** | **Implemented** | `1 x capacity` (no mirroring) | Random-access block store without ring-pointer advancement. Accepts full-block writes (`capacity` elements) and direct element reads/writes (`Buf[i]`). |
+| **`Buffer::ModeFifo`** | **Planned** | Ring queue (`capacity`) | Queued FIFO transport where reading drains samples rather than peeking. Currently rejected at compile time. |
+| **`Buffer::ModeOverlapAdd`** | **Planned** | `frameSize + hop` | Accumulates overlapping output frames (e.g., IFFT synthesis) and drains samples one by one. Currently rejected at compile time. |
+
+### 5.1 Random-Access Table Example (`Buffer::ModeTable`)
+
+```stride
+buffer TableBuf {
+    type: Int
+    capacity: 4
+    mode: Buffer::ModeTable
+    domain: AudioDomain
+}
+
+[10, 20, 30, 40] >> TableBuf;
+99 >> TableBuf[2];
+TableBuf[1] >> Out;
+```
