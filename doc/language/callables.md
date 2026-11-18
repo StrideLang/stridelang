@@ -93,7 +93,7 @@ An entity that a module reads *before* writing preserves its value from one invo
 ```stride
 module Input >> Accumulator(reset: switch Reset { default: off }) >> Output {
     code: [
-        signal Acc { default: 0 type: Int reset: Reset persistent: on }
+        signal Acc { default: 0 type: Int reset: Reset }
         Acc + Input >> Acc;   # Acc is read before written: retained as persistent state
         Acc >> Output;
     ]
@@ -167,17 +167,34 @@ Loops operating over arrays dynamically bind their iteration limits based on por
   GenerateTable() >> Table;                     # OutputPort.size is 512
   ```
 
-### 6.3 Filling Sized Constants
-A `constant` declared without an explicit value can be filled once at startup by an output-driven loop or action:
+### 6.3 Filling Sized Constants and Tables (`RateAdapter`, `onLoad`, `onReset`)
+A `constant` declared without an explicit value can be filled once at compile time (`evaluateConstantFills`) or load time (`onLoad:`) by an output-driven loop:
 
 ```stride
 constant SineTable[1024] { type: Real }
 
-# Populated in domain setup or initialization stream:
+# Populated at compile time / <Domain>_load:
 GenerateSineTable() >> SineTable;
 ```
 
 A subsequent stream attempting to write to the same constant produces a compile-time error (`ConstantWrittenTwice`).
+
+To run a rate-dependent generator such as `Oscillator` inside an output-sized `loop` (or at a different rate in a stream), insert `RateAdapter(rate: ...)`:
+
+```stride
+loop FillSine {
+    ports: [ mainOutputPort OutputPort { entity: Output } ]
+    entities: [
+        signal Output[OutputPort.size] { type: Real }
+        iterator Out { entity: Output }
+    ]
+    streams: [
+        Oscillator(frequency: 1.0) >> RateAdapter(rate: OutputPort.size) >> Out;
+    ]
+}
+```
+
+`RateAdapter` sets the `mainInputPort` rate (`OutputPort.size`) propagated upstream while leaving its `mainOutputPort` at the downstream rate. For runtime-resettable arrays (`signal` arrays or `buffer`s), call the fill loop from `onReset:` (or a triggered `reaction`), which runs *after* defaults are applied.
 
 ---
 

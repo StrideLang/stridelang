@@ -63,12 +63,13 @@ _domainDefinition ControlDomain {
 ```
 
 ### 2.2 Domain Lifecycle Functions
-Every compiled domain provides a standardized four-phase lifecycle API:
+Every compiled domain provides a standardized lifecycle API:
 
 | Phase | Generated C API | Responsibilities |
 | :--- | :--- | :--- |
 | **Load** | `<Domain>_load()` | Evaluates **`onLoad`** streams outside any instance. Prepares read-only tables and precomputed constants. Guarded by an atomic compare-and-swap (CAS). |
-| **Init** | `<Domain>_init(void *state)` | Evaluates **`onInit`** streams, resets signals and switches owned by this domain to default values, and resets state machines. |
+| **Init** | `<Domain>_init(void *state)` | Calls `<Domain>_load()`, evaluates **`onInit`** streams (external/host resource setup), and finishes by calling `<Domain>_reset(state)`. Requires `<Domain>_cleanup` before re-calling `<Domain>_init`. |
+| **Reset** | `<Domain>_reset(void *state)` | Resets domain signals, switches, state machines, and buffer counters to defaults, then evaluates **`onReset`** streams so runtime array/buffer fills persist. Safe to call while the domain is initialized. |
 | **Process** | `<Domain>_process(...)` | Evaluates the domain's stream pipelines, active state machine transitions/actions, and triggered reactions for one execution tick. |
 | **Cleanup** | `<Domain>_cleanup(void *state)` | Releases acquired hardware/software resources, stops worker threads, joins background tasks. |
 

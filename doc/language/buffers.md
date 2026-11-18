@@ -3,9 +3,9 @@
 A `buffer` is a fixed-capacity ring store that accumulates an incoming sample-by-sample data stream over time and surfaces the collected window as a contiguous frame.
 
 A buffer differs from other Stride storage entities:
-- A `signal` holds an atomic value; each write overwrites the prior value.
-- A `table` is a static, explicitly indexed fixed-size array.
-- A `buffer` accumulates streamed samples sequentially. As new samples arrive, the oldest samples are retired once capacity is reached.
+- A `signal` (or `signal[N]`) holds an atomic value or fixed array; each write overwrites the addressed slot.
+- A `constant[N]` holds an immutable lookup table populated at compile time or `<Domain>_load`.
+- A `buffer` configures block-level storage semantics via `mode` (`Buffer::ModeSliding` for rolling window framing, `Buffer::ModeFifo` for queued transport, `Buffer::ModeOverlapAdd` for frame accumulation, or `Buffer::ModeTable` for random-access/block-filled tables).
 
 ---
 
@@ -30,7 +30,7 @@ buffer AudioBuffer {
 | **`frameSize`** | Number of samples exposed in the output window. | Same as `capacity` |
 | **`hop`** | Stride step (samples between consecutive triggers for periodic mode). | Same as `capacity` |
 | **`triggerMode`** | Window completion reporting condition (§3). | `Buffer::TriggerFull` |
-| **`mode`** | Operational ring buffering mode (`Buffer::ModeSliding`). | `Buffer::ModeSliding` |
+| **`mode`** | Operational buffering mode (`Buffer::ModeSliding`, `Buffer::ModeFifo`, `Buffer::ModeOverlapAdd`, `Buffer::ModeTable`). | `Buffer::ModeSliding` |
 | **`default`** | Initial value for all buffer slots. | Zero of `type` |
 | **`reset`** | Trigger/switch that clears the buffer to initial defaults when pulsed. | `none` |
 

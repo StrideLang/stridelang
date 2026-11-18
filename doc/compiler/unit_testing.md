@@ -145,7 +145,7 @@ functionTest DynamicGainTest {
 
 ## 4. Testing Stateful Modules with Resets
 
-For stateful modules (accumulators, filters, counters, state machines) containing persistent variables (`persistent: on`) and reset triggers:
+For stateful modules (accumulators, filters, counters, state machines) with inferred persistent variables (read-before-write) and reset triggers:
 
 ```stride
 module Accumulator {
@@ -163,7 +163,6 @@ module Accumulator {
         signal Total {
             default: 0.0
             reset: Reset
-            persistent: on
         }
         switch Reset { default: off }
     ]

@@ -19,6 +19,7 @@ Status: **prototype, in progress**. This document records the design agreed for 
 | Ping-pong (`frameSize: capacity / 2`, `TriggerHalf`) | Implemented as plain configuration; `ModePingPong` was removed |
 | Peek (`Buf.frame`) | Implemented: zero-copy into reactions and loops, copy into blocks |
 | Buffers into loops | Implemented (main input and through triggered reactions) |
+| `ModeTable` | Implemented (`1 × capacity`, direct indexing & block fill) |
 | `ModeFifo`, `ModeOverlapAdd` | **Not implemented** (rejected with a compile error) |
 | `Domain_init` reset | Implemented |
 | Buffer → buffer, buffer → sink draining | **Not implemented** |
@@ -51,6 +52,7 @@ package Buffer
 constant ModeSliding    { }
 constant ModeFifo       { }
 constant ModeOverlapAdd { }
+constant ModeTable      { }
 
 constant TriggerFull     { }
 constant TriggerHalf     { }
@@ -204,6 +206,7 @@ Vectorization is a **general** codegen property of array arithmetic (`+ - * /`),
 | `ModeFifo` | 1 × capacity | head/tail ring |
 | `ModeSliding` | decided by the compiler (below) | Contiguous windows across the wrap for SIMD/FFT |
 | `ModeOverlapAdd` | ≥ frameSize + hop | accumulate frames, drain samples |
+| `ModeTable` | 1 × capacity | static lookup block (full indexing; no sliding mirror) |
 
 **Mirroring is decided by the compiler.** Frames start at multiples of the hop. A frame can only cross the end of the ring if frames overlap (`frameSize > hop`) or the hop doesn't divide the capacity. In those cases the compiler mirrors the storage (2 × capacity, each sample written twice), so the newest N samples are always contiguous at `[index + capacity - n]`. Otherwise the ring is used as is and the frame is the last completed hop-aligned block. Partial flushes restart the ring at 0, so they keep that alignment.
 
