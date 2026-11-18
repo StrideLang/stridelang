@@ -59,6 +59,10 @@ target_include_directories(stridec_driver PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+target_compile_definitions(stridec_driver PUBLIC
+    STRIDE_VERSION="${PROJECT_VERSION}"
+)
+
 target_link_libraries(stridec_driver PUBLIC
     StrideJit
     StrideParser

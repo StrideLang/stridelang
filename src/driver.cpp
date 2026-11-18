@@ -113,8 +113,12 @@ void printHelp(std::ostream &os, const char *progName) {
      << "  " << progName << " --emit-arduino-lib=SensorDSP sensor_dsp.stride\n";
 }
 
+#ifndef STRIDE_VERSION
+#define STRIDE_VERSION "0.1.0"
+#endif
+
 void printVersion(std::ostream &os) {
-  os << "stridec version 0.1.0 (compatible with LLVM/Clang driver interface)\n";
+  os << "stridec version " << STRIDE_VERSION << " (compatible with LLVM/Clang driver interface)\n";
 }
 
 bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts,

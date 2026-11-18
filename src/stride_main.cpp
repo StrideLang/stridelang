@@ -358,6 +358,10 @@ int handleSetupVscode(const std::string &strideRoot) {
 
 } // namespace
 
+#ifndef STRIDE_VERSION
+#define STRIDE_VERSION "0.1.0"
+#endif
+
 int main(int argc, char *argv[]) {
   if (argc < 2) {
     printUsage(argv[0]);
@@ -374,7 +378,7 @@ int main(int argc, char *argv[]) {
   std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
 
   if (firstArg == "-v" || firstArg == "--version") {
-    std::cout << "stride version 0.1.0 (Stride Toolchain & Driver)\n"
+    std::cout << "stride version " << STRIDE_VERSION << " (Stride Toolchain & Driver)\n"
               << "STRIDEROOT: " << (strideRoot.empty() ? "(none detected)" : strideRoot) << "\n";
     return 0;
   }

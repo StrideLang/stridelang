@@ -35,12 +35,22 @@ Releases are fully **Git- and CI-driven** via GitHub Actions:
 
 Releasing a new version requires only four simple steps:
 
-### Step 1: Bump Version Number in `CMakeLists.txt`
-In `CMakeLists.txt`, update the `project` version:
+### Step 1: Bump Version Numbers
+The primary source of truth for the toolchain version is `stridelang/CMakeLists.txt`:
 ```cmake
 project(stridelang VERSION 1.0.1 LANGUAGES C CXX)
 ```
-*(If applicable, ensure the version string in `package.json` in `vscode-stride-lang` matches).*
+Updating `project(stridelang VERSION ...)` automatically propagates the version to:
+- `stride --version` and `stridec --version` (injected via `STRIDE_VERSION="${PROJECT_VERSION}"`)
+- CPack installers and archives (`CPACK_PACKAGE_VERSION*`)
+- `StrideConfigVersion.cmake`
+- Top-level `Stride/CMakeLists.txt` (`project(Stride VERSION ...)`, which reads the version from `stridelang/CMakeLists.txt`)
+
+Also update the remaining non-CMake version references to match:
+- **`stridelang/MODULE.bazel`**: `version = "1.0.1"` (and the `bazel_dep` snippet in `stridelang/README.md`)
+- **`stridelang/src/driver.cpp` & `stridelang/src/stride_main.cpp`**: fallback `#define STRIDE_VERSION "1.0.1"` (used when building outside CMake)
+- **`vscode-stride-lang/package.json`**: `"version": "1.0.1"` (when releasing an updated VS Code extension)
+- **`Stride/notes/stride_<version>_release_notes.md`**: release notes for the release in the `Stride` meta-repository
 
 ### Step 2: Ensure Tests Pass Locally
 Verify that the test suite builds and passes cleanly:
@@ -68,7 +78,7 @@ git push origin v1.0.1
 
 ## 3. What Happens Automatically in CI
 
-Once the `v*` tag is pushed to GitHub, [`.github/workflows/release.yml`](file:///c:/Users/Andres/source/repos/boardgame/libgame/external/stridelang/.github/workflows/release.yml) executes the following tasks in parallel:
+Once the `v*` tag is pushed to GitHub, [`.github/workflows/release.yml`](../.github/workflows/release.yml) executes the following tasks in parallel:
 
 ```mermaid
 flowchart TD
