@@ -9,6 +9,10 @@ if (STRIDE_OFFICIAL_RELEASE)
     add_compile_definitions(STRIDE_OFFICIAL_RELEASE=1)
 endif()
 
+# Prevent FetchContent googletest from registering install rules into CPack packages
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+set(INSTALL_GMOCK OFF CACHE BOOL "" FORCE)
+
 # Dependencies -------------------------------------------------------------
 if (NOT TARGET StrideJit)
     # 1. Check for prebuilt binaries from an existing build directory
@@ -266,32 +270,39 @@ set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
 set(CPACK_NSIS_HELP_LINK "https://github.com/StrideLang/stridelang")
 set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/StrideLang/stridelang")
 
-set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [=[
-  WriteRegStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT" "$INSTDIR\strideroot"
-  WriteRegStr HKCU "Environment" "STRIDEROOT" "$INSTDIR\strideroot"
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+# Write NSIS install/uninstall commands into a CPack project config file so
+# CPackConfig.cmake does not try to re-parse raw NSIS $variables and quotes.
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/CPackOptions.cmake" [=[
+if(CPACK_GENERATOR MATCHES "NSIS")
+  set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [==[
+    WriteRegStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT" "$INSTDIR\strideroot"
+    WriteRegStr HKCU "Environment" "STRIDEROOT" "$INSTDIR\strideroot"
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 
-  ClearErrors
-  SearchPath $R0 "code.cmd"
-  IfErrors 0 InstallVsCodeExt
-  SearchPath $R0 "code.exe"
-  IfErrors 0 InstallVsCodeExt
-  IfFileExists "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" 0 SkipVsCodeExt
-  StrCpy $R0 "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd"
+    ClearErrors
+    SearchPath $R0 "code.cmd"
+    IfErrors 0 InstallVsCodeExt
+    SearchPath $R0 "code.exe"
+    IfErrors 0 InstallVsCodeExt
+    IfFileExists "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" 0 SkipVsCodeExt
+    StrCpy $R0 "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd"
 
-InstallVsCodeExt:
-  IfFileExists "$INSTDIR\vscode\stride-language.vsix" 0 SkipVsCodeExt
-  DetailPrint "Installing Stride VS Code Extension..."
-  ExecWait '"$R0" --install-extension "$INSTDIR\vscode\stride-language.vsix" --force'
+  InstallVsCodeExt:
+    IfFileExists "$INSTDIR\vscode\stride-language.vsix" 0 SkipVsCodeExt
+    DetailPrint "Installing Stride VS Code Extension..."
+    ExecWait '"$R0" --install-extension "$INSTDIR\vscode\stride-language.vsix" --force'
 
-SkipVsCodeExt:
+  SkipVsCodeExt:
+  ]==])
+
+  set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [==[
+    DeleteRegValue HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT"
+    DeleteRegValue HKCU "Environment" "STRIDEROOT"
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+  ]==])
+endif()
 ]=])
-
-set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [=[
-  DeleteRegValue HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT"
-  DeleteRegValue HKCU "Environment" "STRIDEROOT"
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
-]=])
+set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/CPackOptions.cmake")
 
 # Package generators per platform
 if (WIN32)
