@@ -177,6 +177,31 @@ TEST_F(CrossCompileTest, TargetRISCV32) {
   EXPECT_EQ(e_machine, 0xF3);
 }
 
+TEST_F(CrossCompileTest, TargetAVR_ATmega328P) {
+  if (!isTargetSupported("avr")) {
+    GTEST_SKIP() << "Target 'avr' is not built into the current LLVM library.";
+  }
+
+  std::string objFile = (tempDir / "avr_atmega328p.o").string();
+  EXPECT_TRUE(env.emitObjectFile(objFile, "avr", "atmega328p"));
+  EXPECT_TRUE(std::filesystem::exists(objFile));
+
+  auto bytes = readFileBytes(objFile);
+  ASSERT_GE(bytes.size(), 20u);
+
+  // Validate ELF header: \x7f E L F
+  EXPECT_EQ(bytes[0], 0x7F);
+  EXPECT_EQ(bytes[1], 'E');
+  EXPECT_EQ(bytes[2], 'L');
+  EXPECT_EQ(bytes[3], 'F');
+  // 32-bit ELF & Little Endian
+  EXPECT_EQ(bytes[4], 1); // ELFCLASS32
+  EXPECT_EQ(bytes[5], 1); // ELFDATA2LSB
+  // e_machine: EM_AVR = 0x53 (83)
+  uint16_t e_machine = bytes[18] | (bytes[19] << 8);
+  EXPECT_EQ(e_machine, 0x53);
+}
+
 TEST_F(CrossCompileTest, TargetWebAssemblyWASI) {
   if (!isTargetSupported("wasm32-unknown-wasi")) {
     GTEST_SKIP() << "Target 'wasm32-unknown-wasi' is not built into the current LLVM library.";

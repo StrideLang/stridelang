@@ -44,6 +44,7 @@ endif()
 # Compiler Driver Library & Executables (stride & stridec) -----------------
 add_library(stridec_driver STATIC
     src/driver.cpp
+    src/board_builder.cpp
 )
 
 target_include_directories(stridec_driver PUBLIC
@@ -56,6 +57,9 @@ target_link_libraries(stridec_driver PUBLIC
     StrideUtils
     StrideGen
 )
+if (WIN32)
+    target_link_libraries(stridec_driver PUBLIC advapi32)
+endif()
 
 # Unified Stride CLI Front-End
 add_executable(stride

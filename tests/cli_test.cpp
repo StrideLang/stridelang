@@ -6,6 +6,9 @@
 #include <vector>
 
 #include "stridec/driver.hpp"
+#include "stridec/board_builder.hpp"
+#include "stride/stridegen/hardwareresolver.hpp"
+#include "stride/utils/astfunctions.h"
 
 namespace {
 
@@ -442,4 +445,57 @@ TEST_F(StridecDriverTest, DebugAndOptimizationFlags) {
   EXPECT_FALSE(opts.vectorize);
   EXPECT_TRUE(opts.noUnrollLoops);
   EXPECT_FALSE(opts.unrollLoops);
+}
+
+TEST_F(StridecDriverTest, ArduinoUnoBoardHeaderAndFirmwareBuild) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  strd::HardwareResolver resolver(strideRoot);
+  std::string errMsg;
+  auto uno = resolver.resolve("AVR", "ArduinoUno", &errMsg);
+  ASSERT_TRUE(uno.has_value()) << errMsg;
+
+  std::string header = strd::generateBoardHeader(*uno, errMsg);
+  ASSERT_FALSE(header.empty()) << errMsg;
+  EXPECT_NE(header.find("#define STRIDE_PIN_COUNT 20"), std::string::npos);
+  EXPECT_NE(header.find("#define STRIDE_SERIAL_BAUD 115200UL"), std::string::npos);
+  EXPECT_NE(header.find("STRIDE_PIN_OUTPUT_REGS"), std::string::npos);
+
+  const std::string avrGcc = strd::findAvrTool("avr-gcc", strideRoot);
+  const std::string avrObjcopy = strd::findAvrTool("avr-objcopy", strideRoot);
+  if (avrGcc.empty() || avrObjcopy.empty()) {
+    GTEST_SKIP() << "avr-gcc / avr-objcopy not installed";
+  }
+
+  std::error_code ec;
+  std::filesystem::path tempDir =
+      std::filesystem::temp_directory_path(ec) / "stride_uno_blinky_test";
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
+
+  std::filesystem::path blinkStride = tempDir / "blinky.stride";
+  {
+    std::ofstream f(blinkStride);
+    f << "use AVR version 1.0 on ArduinoUno\n\n"
+      << "signal Millis { type: UInt32 domain: AvrTickDomain }\n"
+      << "signal Wave { type: Real domain: AvrTickDomain }\n"
+      << "switch LedOn { domain: AvrTickDomain }\n\n"
+      << "[13, 1] >> __AvrPinMode();\n"
+      << "__AvrMillis() >> Millis;\n"
+      << "Millis * 0.0062832 >> __Sin() >> Wave;\n"
+      << "[Wave, 0.0] >> Greater() >> LedOn;\n"
+      << "[13, LedOn] >> __AvrPinWrite();\n";
+  }
+
+  std::filesystem::path hexOut = tempDir / "blinky.hex";
+  strd::BoardBuildOptions bopts;
+  bopts.inputFile = blinkStride.string();
+  bopts.outputFile = hexOut.string();
+  bopts.buildDir = (tempDir / "build").string();
+  bopts.strideRoot = strideRoot;
+  EXPECT_TRUE(strd::buildBoardFirmware(bopts, out, err)) << err.str();
+  EXPECT_TRUE(std::filesystem::exists(hexOut));
+  EXPECT_GT(std::filesystem::file_size(hexOut), 0u);
+  EXPECT_TRUE(std::filesystem::exists(tempDir / "blinky.elf"));
+
+  std::filesystem::remove_all(tempDir, ec);
 }

@@ -24,48 +24,26 @@ The official Ahead-Of-Time (AOT) compiler, runtime toolchain, and build system i
 
 ---
 
-## CLI Usage (`stridec`)
+## CLI Usage (`stride` & `stridec`)
 
-```text
-Usage: stridec [options] <input.stride>
+See **[CLI Reference](doc/cli.md)** for the full list of commands, flags, caching behavior, and examples.
 
-Target & Architecture Selection:
-  --target=<triple>, -target <triple>   Set LLVM target triple (e.g. thumbv6m-none-eabi, arm-none-eabi)
-  -mcpu=<cpu>, -mcpu <cpu>             Set target CPU (e.g. cortex-m0plus, cortex-m4, cortex-m7)
-  -march=<arch>                        Set target architecture
-  -mfloat-abi=<abi>                    Floating-point ABI: soft, softfp, hard
-  -mfpu=<fpu>                          Target FPU
+### Quick Examples
 
-Code Generation & Relocation Options:
-  -fPIC, -fno-PIC                      Generate position-independent code
-  -fropi, -frwpi                       Read-only / read-write position independence
-  -mcmodel=<model>                     Code model: tiny, small, kernel, medium, large
-  -O0, -O1, -O2, -O3, -Os, -Oz         Optimization level
-  -c                                   Compile to object file (do not link)
+```bash
+# Inspect environment and available systems
+stride doctor
+stride system list
 
-Output & Header Options:
-  -o <file>                            Output object file (.o) or static archive (.a)
-  --emit-header=<file>, --header-out   Output C interface header file (.h)
-  --domain=<name>, -domain <name>      Specific domain to generate header for
+# Compile to object file + C header
+stridec -c sensor_dsp.stride -o sensor_dsp.o --emit-header=sensor_dsp.h
 
-Arduino Pre-built Library Options:
-  --emit-arduino-lib=<dir>, --arduino-lib=<dir>
-                                       Output an Arduino-compatible precompiled library bundle
-  --arduino-name=<name>                Name of the Arduino library (default: derived from input)
-  --arduino-arch=<arch>                Target architecture: arm (default), all
-  --arduino-mcu=<mcus>                 Comma-separated list of target MCUs (e.g. cortex-m0plus,cortex-m4)
-  --arduino-author=<author>            Author name for library.properties (default: Stride)
-  --arduino-version=<ver>              Library version for library.properties (default: 1.0.0)
+# Build & flash board firmware (e.g. Arduino Uno)
+stride build blinky.stride -o blinky.hex
+stride flash blinky.stride --boardOverride=ArduinoUno --port=COM3
 
-Include & Path Options:
-  -I <dir>, -I<dir>                    Add directory to .stride include search path
-  -isystem <dir>                       Add system include directory
-  --strideroot=<dir>                   Custom Stride root directory
-
-Driver Options:
-  -v, --verbose                        Enable verbose output
-  -h, --help                           Display this help message
-  --version                            Display compiler version
+# Generate a precompiled Arduino ARM library bundle
+stridec --emit-arduino-lib=SensorDSP sensor_dsp.stride
 ```
 
 ---
@@ -274,6 +252,7 @@ cpack --config build/CPackConfig.cmake -C Release
 * **[State Machines](doc/language/state_machines.md)**: Declarative hierarchical statecharts, discrete tick semantics, lifecycle hooks (`onEntry`, `onProcess`, `onExit`), guards, orthogonal regions, and history pseudo-states.
 * **[Buffer Entities & Window Framing](doc/language/buffers.md)**: Fixed-capacity ring stores, sliding windows, hopping rates, trigger modes, and zero-copy frame peeking into reactions.
 * **[Buffers & Frequency Domain Processing](doc/language/buffers_and_frequency_domain.md)**: Design specification for buffer storage, windowing, and block-based frequency domain processing.
+* **[Memory Management, Storage Entities & Formal Models](doc/language/memory_management.md)**: Analysis of Stride's static memory primitives (`constant`, `signal`, `buffer`, `string`), `Buffer::ModeTable` / `RateAdapter` fill semantics, cross-language gaps, and formal PL/compiler comparisons.
 * **[Multi-Rate Processing Compilation](doc/language/multirate_compilation.md)**: Architecture, semantic analysis, and LLVM code generation for multi-rate signal streams and domains.
 * **[Signal Arrays & Expansion](doc/language/arrays.md)**: Statically allocated signal arrays, schema-driven property expansion, and the list rank resolution matrix ($R_0, R_1, R_2$).
 * **[Namespaces, Packages & Scopes](doc/language/namespaces_and_packages.md)**: Lexical scoping rules, domain-gated variable access, package root barrel files (`Name/` + `Name.stride`), conditional `@with` imports, and package security.
@@ -288,5 +267,6 @@ cpack --config build/CPackConfig.cmake -C Release
 
 ### Toolchain & Maintainer Guides
 
+* **[CLI Reference (`stride` & `stridec`)](doc/cli.md)**: Complete reference for all subcommands, target/board overrides, optimization/debug flags, feature toggles, and firmware upload.
 * **[Developer Workflow Guide](doc/developer_workflow.md)**: Instructions for developing on Stride alongside an installed release, setting up STRIDE_DEV, VS Code workspace isolation, and diagnostics.
 * **[Release Procedure Guide](doc/release_procedure.md)**: Step-by-step maintainer release workflow, cross-platform packaging with CPack, and CI/CD automation.

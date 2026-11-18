@@ -1,4 +1,8 @@
 #include "stridec/driver.hpp"
+#include "stridec/board_builder.hpp"
+
+#include "stride/stridegen/hardwareresolver.hpp"
+#include "stride/utils/astfunctions.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -49,30 +53,36 @@ void printHelp(std::ostream &os, const char *progName) {
   os << "Stride Compiler (stridec) - Clang-compatible AOT Driver\n\n"
      << "Usage: " << progName << " [options] <input1.stride> [input2.stride ...]\n\n"
      << "Target & Architecture Selection:\n"
-     << "  --target=<triple>, -target <triple>   Set LLVM target triple (e.g. thumbv6m-none-eabi, arm-none-eabi)\n"
-     << "  -mcpu=<cpu>, -mcpu <cpu>             Set target CPU (e.g. cortex-m0plus, cortex-m4, cortex-m7)\n"
-     << "  -march=<arch>                        Set target architecture\n"
-     << "  -mfloat-abi=<abi>                    Floating-point ABI: soft, softfp, hard\n"
-     << "  -mfpu=<fpu>                          Target FPU\n\n"
+     << "  --target=<triple>, -target <triple>, --target-triple=<triple>\n"
+     << "                                       Set LLVM target triple (e.g. thumbv6m-none-eabi, arm-none-eabi, avr)\n"
+     << "  -mcpu=<cpu>, --mcpu=<cpu>, -march=<arch>\n"
+     << "                                       Set target CPU / architecture (e.g. cortex-m0plus, cortex-m4, atmega328p)\n"
+     << "  --target-features=<features>         Comma-separated LLVM target feature flags (e.g. +vfp4)\n"
+     << "  --boardOverride=<name>               Override hardware board from 'use <System> on <Board>'\n\n"
      << "Code Generation & Relocation Options:\n"
-     << "  -fPIC, -fno-PIC                      Generate position-independent code\n"
-     << "  -fropi, -frwpi                       Read-only / read-write position independence\n"
-     << "  -mcmodel=<model>                     Code model: tiny, small, kernel, medium, large\n"
+     << "  -fPIC, -fno-PIC                      Generate position-independent code / static relocation\n"
+     << "  -fropi, -frwpi, -fropi-rwpi          Read-only / read-write position independence\n"
+     << "  -mcmodel=<model>, --code-model=<model>\n"
+     << "                                       Code model: tiny, small, kernel, medium, large\n"
      << "  -Wconversion, --report-conversions   Warn about conversions that can lose data\n"
-     << "  -femit-all-functions,                Force code generation for all root-level functions\n"
-     << "  --emit-all-functions, --compile-functions\n"
+     << "  -femit-all-functions, --emit-all-functions, --compile-functions\n"
+     << "                                       Force code generation for all root-level functions\n"
+     << "  --emit-domain-state                  Emit __stride_<Domain>_state global buffers in object output\n"
      << "  -O0, -O1, -O2, -O3, -Os, -Oz         Optimization level\n"
      << "  -g, -g2, -g3                         Generate full DWARF debug information\n"
      << "  -gline-tables-only, -g1              Generate line table debug information only\n"
      << "  -g0                                  Disable debug information\n"
      << "  -fvectorize, -fno-vectorize          Enable / disable vectorization\n"
      << "  -funroll-loops, -fno-unroll-loops    Enable / disable loop unrolling\n"
-     << "  --build-type=<type>                  Build preset: debug, release, relwithdebinfo\n"
-     << "  -c                                   Compile to object file (do not link)\n\n"
-     << "Output & Header Options:\n"
-     << "  -o <file>                            Output object file (.o / .obj) or static archive (.a)\n"
-     << "  --emit-header=<file>, --header-out   Output C interface header file (.h)\n"
-     << "  --domain=<name>, -domain <name>      Specific domain to generate header for\n\n"
+     << "  --build-type=<type>                  Build preset: debug, release, relwithdebinfo, minsizerel\n"
+     << "  -c                                   Compile to object file (do not link board firmware)\n\n"
+     << "Output, Firmware & Upload Options:\n"
+     << "  -o <file>                            Output object (.o/.obj), archive (.a), or firmware (.elf/.hex)\n"
+     << "  --emit-header=<file>, --header-out=<file>\n"
+     << "                                       Output C interface header file (.h)\n"
+     << "  --domain=<name>, -domain <name>      Specific domain to generate header for\n"
+     << "  --upload, --flash                    Build and upload board firmware (e.g. via avrdude)\n"
+     << "  --port=<port>, -P <port>             Serial port for board upload (auto-detected if omitted)\n\n"
      << "Arduino Pre-built Library Options:\n"
      << "  --emit-arduino-lib=<dir>, --arduino-lib=<dir>\n"
      << "                                       Output an Arduino-compatible precompiled library bundle\n"
@@ -99,8 +109,8 @@ void printHelp(std::ostream &os, const char *progName) {
      << "  " << progName << " -c sensor.stride -o sensor.o --emit-header=sensor.h\n"
      << "  " << progName << " -c math.stride filters.stride -o dsp.o --emit-header=dsp.h --emit-all-functions\n"
      << "  " << progName << " -c dsp.stride --target=thumbv6m-none-eabi -mcpu=cortex-m0plus -o dsp.o --emit-header=dsp.h\n"
-     << "  " << progName << " --emit-arduino-lib=SensorDSP sensor_dsp.stride\n"
-     << "  " << progName << " --emit-arduino-lib=CustomDSP --arduino-mcu=cortex-m4 sensor_dsp.stride\n";
+     << "  " << progName << " blinky.stride --boardOverride=ArduinoUno -o blinky.hex\n"
+     << "  " << progName << " --emit-arduino-lib=SensorDSP sensor_dsp.stride\n";
 }
 
 void printVersion(std::ostream &os) {
@@ -129,7 +139,18 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
     } else if (arg == "-v" || arg == "--verbose") {
       opts.verbose = true;
     } else if (arg == "-c") {
-      // Standard clang compile flag
+      opts.compileOnly = true;
+      continue;
+    } else if (arg == "--emit-domain-state") {
+      opts.emitDomainState = true;
+      continue;
+    } else if (arg == "--upload" || arg == "--flash") {
+      opts.uploadFirmware = true;
+      continue;
+    } else if (parseOptionWithVal(arg, i, args, "--boardOverride", opts.boardName)) {
+      continue;
+    } else if (parseOptionWithVal(arg, i, args, "--port", opts.serialPort) ||
+               parseOptionWithVal(arg, i, args, "-P", opts.serialPort)) {
       continue;
     } else if (arg == "-g" || arg == "-g2" || arg == "-g3") {
       opts.debugInfo = true;
@@ -522,9 +543,35 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
     return 1;
   }
 
-  if (opts.outputFile.empty() && opts.headerFile.empty() && opts.arduinoLibDir.empty()) {
-    err << "stridec: error: no output specified. Use -o <file.o>, --emit-header=<file.h>, or --emit-arduino-lib=<dir>\n";
+  if (opts.outputFile.empty() && opts.headerFile.empty() &&
+      opts.arduinoLibDir.empty() && !opts.uploadFirmware) {
+    err << "stridec: error: no output specified. Use -o <file.o|.hex|.elf>, --emit-header=<file.h>, --emit-arduino-lib=<dir>, or --upload\n";
     return 1;
+  }
+
+  auto endsWith = [](const std::string &str, const std::string &suffix) {
+    return str.size() >= suffix.size() &&
+           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+  };
+
+  if (!opts.compileOnly &&
+      (opts.uploadFirmware || endsWith(opts.outputFile, ".hex") ||
+       endsWith(opts.outputFile, ".elf"))) {
+    BoardBuildOptions bopts;
+    bopts.inputFile = opts.inputFiles[0];
+    bopts.outputFile = opts.outputFile;
+    bopts.strideRoot = opts.strideRoot;
+    bopts.boardOverride = opts.boardName;
+    bopts.includeDirs = opts.includeDirs;
+    bopts.featureToggles = opts.featureToggles;
+    bopts.disabledFeatures = opts.disabledFeatures;
+    bopts.noDefaultFeatures = opts.noDefaultFeatures;
+    bopts.serialPort = opts.serialPort;
+    bopts.upload = opts.uploadFirmware;
+    bopts.verbose = opts.verbose;
+    bopts.optimizationLevel =
+        opts.optimizationLevel >= 0 ? opts.optimizationLevel : 2;
+    return buildBoardFirmware(bopts, out, err) ? 0 : 1;
   }
 
   // Handle Arduino precompiled library output if requested
@@ -545,6 +592,29 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
   }
 
   strd::StrideEnvironment env(opts.strideRoot);
+  if (!opts.boardName.empty()) {
+    env.setBoardOverride(opts.boardName);
+  }
+  if (opts.targetTriple.empty() && !opts.inputFiles.empty()) {
+    BoardSpec spec;
+    std::string inspectErr;
+    std::string effectiveRoot =
+        opts.strideRoot.empty() ? ASTFunctions::getDefaultStrideRoot()
+                                : opts.strideRoot;
+    if (inspectProgramBoard(opts.inputFiles[0], effectiveRoot, opts.boardName,
+                            spec, inspectErr)) {
+      HardwareResolver hwResolver(effectiveRoot);
+      if (auto hw = hwResolver.resolve(spec.platformName, spec.boardName)) {
+        opts.targetTriple = hw->stringProperty("triple");
+        if (opts.targetCPU.empty()) {
+          opts.targetCPU = hw->stringProperty("cpu");
+        }
+      }
+    }
+  }
+  if (!opts.targetTriple.empty()) {
+    env.setTarget(opts.targetTriple, opts.targetCPU, opts.targetFeatures);
+  }
   for (const auto &inc : opts.includeDirs) {
     env.addIncludePath(inc);
   }
@@ -611,6 +681,9 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
   if (!ok) {
     err << "stridec: error: compilation failed\n";
     return 1;
+  }
+  if (opts.emitDomainState) {
+    env.emitDomainStateBuffers();
   }
 
   if (opts.reportConversions) {
