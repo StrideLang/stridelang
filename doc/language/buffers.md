@@ -129,3 +129,54 @@ buffer TableBuf {
 99 >> TableBuf[2];
 TableBuf[1] >> Out;
 ```
+
+---
+
+## 6. Formal Foundations of Buffer I/O
+
+For single-domain (synchronous and multirate) computation, the four buffer modes partition storage semantics along two orthogonal axes—**how writes arrive** (sample-by-sample vs. frame/random-access) and **how reads consume data** (non-destructive window peek, destructive queue drain, or additive frame accumulation):
+
+| Write $\backslash$ Read | Non-Destructive Window / Random Read | Destructive Drain ($1$ or $K$ items) | Additive Frame Accumulation + Sample Drain |
+| :--- | :--- | :--- | :--- |
+| **Sample-by-sample ($1 \to N$)** | **`ModeSliding`** (STFT analysis, FIR history, RMS/pitch windows, delay lines) | **`ModeFifo`** (decimation queues, packetization, bursty event queues) | — |
+| **Frame / random-access ($N \to N$ or $i \to 1$)** | **`ModeTable`** (wavetables, LUTs, state/scratch arrays, block-filled coefficients) | **`ModeFifo`** (generalized to block push / scalar pop) | **`ModeOverlapAdd`** (ISTFT / overlap-add synthesis, partitioned convolution tail accumulation) |
+
+### 6.1 Relationship to Classical Dataflow & DSP Formalisms
+
+1. **SDF & CSDF (Synchronous and Cyclo-Static Dataflow — Lee & Messerschmitt 1987; Bilsen et al. 1996)**
+   - In SDF, every channel $e = (u, v)$ has static production rate $p(e) \in \mathbb{N}^+$, consumption rate $c(e) \in \mathbb{N}^+$, and initial token delay $d(e) \in \mathbb{N}$; CSDF extends rates to periodic phase sequences $[p_1, \dots, p_k]$.
+   - Stride's `ModeSliding` (`hop` + `triggerMode`) and `ModeOverlapAdd` are direct specializations of CSDF channels: a buffer with `hop = H` triggers its downstream reaction once every $H$ upstream ticks (a $[0, \dots, 0, 1]$ CSDF schedule). Because `capacity`, `frameSize`, and `hop` are compile-time constants (`BufferSpec`), Stride preserves SDF's **zero-heap, statically bounded memory guarantee**.
+
+2. **StreamIt Tapes (`push` / `pop` / `peek` — Thies, Karczmarek & Amarasinghe 2002)**
+   - StreamIt formalized three per-firing rates on filter tapes to support sliding-window DSP: $\text{push}(u)$ items appended, $\text{pop}(v)$ items consumed/advanced (`hop`), and $\text{peek}(v) \ge \text{pop}(v)$ items inspected without removal (`frameSize`).
+   - Stride's `buffer` maps directly onto StreamIt's tape primitives:
+     - `ModeSliding`: $\text{push} = 1$, $\text{pop} = \text{hop}$, $\text{peek} = \text{frameSize}$ (`Buf.frame`).
+     - `ModeFifo`: $\text{push} = 1$ (or block), $\text{pop} = \text{peek} = \text{frameSize}$ (destructive read).
+   - **Contiguity Invariant over StreamIt**: Whereas StreamIt circular tapes require either modulo indexing inside kernels or copy-on-wrap unless unrolled, Stride's compiler-managed mirroring (`frameSize > hop || capacity % hop != 0` allocates $2 \times \text{capacity}$ and mirrors writes) guarantees that `Buf.frame` is **always a contiguous linear pointer** (`ptr` in LLVM IR) suitable for zero-copy FFT and SIMD kernels.
+
+3. **Faust ($z^{-k}$ Delay Lines & `rdtable` / `rwtable` — Orlarey et al.)**
+   - Faust separates bounded time-shift rings ($x(t - k)$) from random-access tables (`rdtable` for immutable tables, `rwtable` for mutable tables).
+   - Stride matches this formal split (`constant[N]` $\leftrightarrow$ `rdtable`, `ModeTable` / `signal[N]` $\leftrightarrow$ `rwtable`, `ModeSliding` $\leftrightarrow$ windowed delay line) while adding first-class **block/window framing (`frameSize`, `hop`, `ModeOverlapAdd`)** for multirate frequency-domain pipelines.
+
+4. **Halide & Polyhedral Storage Folding (`store_at` / `compute_at`)**
+   - Rather than requiring external schedule pragmas to fold an unbounded time dimension $t$ into circular or linear memory, Stride packages the four canonical DSP storage schedules as `Buffer::Mode*` on the `buffer` entity while keeping stream expressions (`AudioIn >> AudioBuffer`, `AudioBuffer.frame >> FFT()`) schedule-independent.
+
+---
+
+## 7. Coverage, Idioms, and Future Work
+
+### 7.1 Composing Overlap-Save (OLS) Without a Separate Mode
+Unlike Overlap-Add (`ModeOverlapAdd`), Overlap-Save discards the first $M - 1$ aliased samples of each $N$-point IFFT output frame and concatenates the remaining $L = N - (M - 1)$ valid samples. This requires no additional buffer mode:
+- Analysis uses `ModeSliding` (`frameSize: N, hop: L`).
+- Synthesis slices the valid tail of the IFFT output (`OutFrame[M - 1 : N - 1]`) into a `ModeFifo` (or upsampled stream).
+
+### 7.2 Planned Intra-Domain Extensions
+1. **`Buffer::ModeOverlapAdd` Implementation**:
+   - **Port sizing**: Input port size equals `frameSize` (accepting a full synthesis frame per write, like `ModeTable`), while the output side drains `1` sample per consumer tick (or `hop` samples per block).
+   - **Accumulation semantics**: Incoming frames add into the active `frameSize` window starting at the write head (`+=`), advance the write head by `hop`, and zero slots as they are drained by the read head.
+2. **`Buffer::ModeFifo` Implementation**:
+   - **Static vs. event-driven queues**: When producer and consumer rates are statically matched via multirate/`RateAdapter`, `ModeFifo` acts as a static SDF queue that cannot underflow or overflow. When written or read conditionally inside a `reaction`, `ModeFifo` should expose `.count` / `.ready` and define deterministic underflow/overflow behavior (gating the consumer via `.ready` vs. padding with `default`).
+3. **Relative Delay-Tap Views (`Buf.tap[k]`)**:
+   - Exposing indexed tap reads relative to the current write head on `ModeSliding` buffers (`Buf.tap[delay]`) will allow multi-tap and fractional delay lines (such as `FractionalDelay`) to use `ModeSliding` directly without manual modulo index arithmetic.
+4. **Cross-Domain Buffering (Separate Specification)**:
+   - These four modes intentionally specify **intra-domain** storage and framing only. Asynchronous cross-domain transport (lock-free SPSC rings, triple-buffered latest-frame exchange, and rate-drift policies) is orthogonal and handled at domain boundaries.
