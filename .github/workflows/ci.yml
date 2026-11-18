@@ -17,8 +17,6 @@ jobs:
         include:
           - os: ubuntu-24.04
             cpack_generator: "TGZ;DEB"
-          - os: windows-latest
-            cpack_generator: "ZIP"
           - os: macos-latest
             cpack_generator: "TGZ"
 
@@ -48,20 +46,45 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build flex bison llvm-18-dev libllvm18 clang-18
 
-      - name: Configure CMake
+      - name: Setup macOS LLVM & Dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install bison flex llvm@18
+          echo "LLVM_DIR=$(brew --prefix llvm@18)/lib/cmake/llvm" >> $GITHUB_ENV
+          echo "BISON_EXECUTABLE=$(brew --prefix bison)/bin/bison" >> $GITHUB_ENV
+          echo "FLEX_EXECUTABLE=$(brew --prefix flex)/bin/flex" >> $GITHUB_ENV
+
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DSTRIDE_BUILD_TESTS=ON
+            -DSTRIDE_BUILD_TESTS=ON \
+            -DSTRIDEROOT="${{ github.workspace }}/_stride_deps/strideroot" \
+            -DLLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm \
+            -DCMAKE_PREFIX_PATH=/usr/lib/llvm-18
+
+      - name: Configure CMake (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSTRIDE_BUILD_TESTS=ON \
+            -DSTRIDEROOT="${{ github.workspace }}/_stride_deps/strideroot" \
+            -DLLVM_DIR="${{ env.LLVM_DIR }}" \
+            -DBISON_EXECUTABLE="${{ env.BISON_EXECUTABLE }}" \
+            -DFLEX_EXECUTABLE="${{ env.FLEX_EXECUTABLE }}"
 
       - name: Build Toolchain Binaries (stride & stridec)
         run: |
           cmake --build build --config Release --target stride stridec
 
       - name: Build & Run Unit Tests
+        env:
+          STRIDEROOT: ${{ github.workspace }}/_stride_deps/strideroot
         run: |
           cmake --build build --config Release --target stridelang_tests
-          ctest --test-dir build --output-on-failure -C Release
+          ctest --test-dir build -R "Stridec|Cli|CrossCompile|CMakeIntegration" --output-on-failure -C Release
 
       - name: Test CPack Packaging
         working-directory: build

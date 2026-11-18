@@ -374,7 +374,7 @@ int main(int argc, char *argv[]) {
   std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
 
   if (firstArg == "-v" || firstArg == "--version") {
-    std::cout << "stride version 1.0.0 (Stride Toolchain & Driver)\n"
+    std::cout << "stride version 0.1.0 (Stride Toolchain & Driver)\n"
               << "STRIDEROOT: " << (strideRoot.empty() ? "(none detected)" : strideRoot) << "\n";
     return 0;
   }

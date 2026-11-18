@@ -114,7 +114,7 @@ void printHelp(std::ostream &os, const char *progName) {
 }
 
 void printVersion(std::ostream &os) {
-  os << "stridec version 1.0.0 (compatible with LLVM/Clang driver interface)\n";
+  os << "stridec version 0.1.0 (compatible with LLVM/Clang driver interface)\n";
 }
 
 bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts,
