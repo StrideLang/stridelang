@@ -724,6 +724,20 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
       return false;
     }
     env.emitDomainStateBuffers();
+    // Where each variable lives in the firmware's memory: domain state
+    // blocks (__stride_<Domain>_state) and globals, by ELF symbol. A host
+    // tool reads a memory or state dump with it.
+    {
+      std::filesystem::path layoutPath = hexPath;
+      layoutPath.replace_extension(".layout.json");
+      std::ofstream layout(layoutPath, std::ios::binary);
+      if (layout) {
+        layout << env.getProgramLayout().toJson();
+      } else {
+        err << "stride: warning: could not write " << layoutPath.string()
+            << "\n";
+      }
+    }
     if (!env.emitObjectFile(progObj.string(), triple, cpu, "", "static", "")) {
       err << "stride: error: failed to emit AVR object file\n";
       return false;
