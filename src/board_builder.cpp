@@ -11,6 +11,10 @@
 #include "stride/utils/astfunctions.h"
 #include "stride/utils/astquery.h"
 
+#ifdef STRIDEC_EMBEDDED_RUNTIME
+#include "stridec/embedded_runtime.hpp"
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -765,11 +769,56 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
     return false;
   }
 
+  // The string runtime (Print, Concat, Format, ...), the same C file the
+  // JIT uses, embedded in stridec so it always matches this compiler. The
+  // linker keeps only the functions the program calls.
+  std::vector<std::string> linkInputs = {progObj.string(), runtimeObj.string()};
+#ifdef STRIDEC_EMBEDDED_RUNTIME
+  {
+    const std::filesystem::path rtDir = workDir / "stride_rt";
+    const std::filesystem::path statusDir = rtDir / "stride" / "stridejit";
+    std::error_code ec;
+    std::filesystem::create_directories(statusDir, ec);
+    auto writeEmbedded = [&](const std::filesystem::path &path,
+                             const unsigned char *bytes, size_t size) {
+      std::ofstream file(path, std::ios::binary);
+      file.write(reinterpret_cast<const char *>(bytes),
+                 static_cast<std::streamsize>(size));
+      return static_cast<bool>(file);
+    };
+    const std::filesystem::path stringSrc = rtDir / "strideruntime_string.c";
+    // The arrays end with a 0 that is not part of the file
+    if (!writeEmbedded(stringSrc, kStringRuntimeSource,
+                       sizeof(kStringRuntimeSource) - 1) ||
+        !writeEmbedded(statusDir / "stride_status.h", kStatusHeaderSource,
+                       sizeof(kStatusHeaderSource) - 1)) {
+      err << "stride: error: failed to write the string runtime to "
+          << rtDir.string() << "\n";
+      return false;
+    }
+    std::vector<std::string> args = {mmcuFlag, "-Os", "-std=gnu11",
+                                     "-ffunction-sections", "-fdata-sections",
+                                     "-DSTRIDE_RT_NO_STDIO",
+                                     "-I" + rtDir.string()};
+    if (hw->blockString("types", "real") == "Float32") {
+      args.push_back("-DSTRIDE_RT_REAL_IS_FLOAT");
+    }
+    const std::filesystem::path stringObj = workDir / "strideruntime_string.o";
+    args.insert(args.end(),
+                {"-c", stringSrc.string(), "-o", stringObj.string()});
+    if (runSubprocess(avrGcc, args, opts.verbose, out) != 0) {
+      err << "stride: error: avr-gcc failed compiling the string runtime\n";
+      return false;
+    }
+    linkInputs.push_back(stringObj.string());
+  }
+#endif
+
   // 4. Link .elf and extract .hex.
-  if (runSubprocess(avrGcc,
-                    {mmcuFlag, "-Os", "-Wl,--gc-sections", progObj.string(),
-                     runtimeObj.string(), "-lm", "-o", elfPath.string()},
-                    opts.verbose, out) != 0) {
+  std::vector<std::string> linkArgs = {mmcuFlag, "-Os", "-Wl,--gc-sections"};
+  linkArgs.insert(linkArgs.end(), linkInputs.begin(), linkInputs.end());
+  linkArgs.insert(linkArgs.end(), {"-lm", "-o", elfPath.string()});
+  if (runSubprocess(avrGcc, linkArgs, opts.verbose, out) != 0) {
     err << "stride: error: avr-gcc link failed\n";
     return false;
   }
