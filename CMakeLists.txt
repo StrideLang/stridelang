@@ -230,8 +230,8 @@ install(DIRECTORY examples/
     COMPONENT Examples
 )
 
-# Install documentation
-install(FILES README.md
+# Install documentation and license
+install(FILES README.md License.txt
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
     COMPONENT Documentation
 )
@@ -262,6 +262,8 @@ set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/StrideLang/stridelang")
 set(CPACK_PACKAGE_CONTACT "Stride Language Project <https://github.com/StrideLang/Stride>")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Stride Language Project")
+set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-only")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/License.txt")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "Stride")
 set(CPACK_STRIP_FILES TRUE)
 
