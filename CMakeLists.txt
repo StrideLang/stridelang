@@ -243,6 +243,8 @@ set(CPACK_STRIP_FILES TRUE)
 
 # Component grouping
 set(CPACK_COMPONENTS_ALL Compiler StandardLibrary VSCode Development Examples Documentation)
+set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
+set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
 set(CPACK_COMPONENT_COMPILER_DISPLAY_NAME "Stride Unified Toolchain (stride & stridec)")
 set(CPACK_COMPONENT_COMPILER_DESCRIPTION "Compiler, runtime driver, and toolchain manager binaries.")
 set(CPACK_COMPONENT_COMPILER_REQUIRED ON)
