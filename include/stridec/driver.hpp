@@ -58,6 +58,8 @@ struct StridecOptions {
   bool emitAllFunctions = false;
   // Print conversions that can lose data or change values as warnings
   bool reportConversions = false;
+  // A String write that can be cut off is an error
+  bool strict = false;
   bool debugInfo = false;
   std::string debugInfoLevel = "none";
   int optimizationLevel = -1;

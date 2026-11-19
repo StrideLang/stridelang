@@ -29,6 +29,7 @@ struct BoardBuildOptions {
   std::string serialPort;
   bool upload = false;
   bool verbose = false;
+  bool strict = false;
   int optimizationLevel = 2;
 };
 

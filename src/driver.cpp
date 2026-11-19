@@ -82,6 +82,7 @@ void printHelp(std::ostream &os, const char *progName) {
      << "                                       Output C interface header file (.h)\n"
      << "  --domain=<name>, -domain <name>      Specific domain to generate header for\n"
      << "  --upload, --flash                    Build and upload board firmware (e.g. via avrdude)\n"
+     << "  --strict                             Make a String write that can be cut off an error\n"
      << "  --port=<port>, -P <port>             Serial port for board upload (auto-detected if omitted)\n\n"
      << "Arduino Pre-built Library Options:\n"
      << "  --emit-arduino-lib=<dir>, --arduino-lib=<dir>\n"
@@ -146,6 +147,9 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
       continue;
     } else if (arg == "--upload" || arg == "--flash") {
       opts.uploadFirmware = true;
+      continue;
+    } else if (arg == "--strict") {
+      opts.strict = true;
       continue;
     } else if (parseOptionWithVal(arg, i, args, "--boardOverride", opts.boardName)) {
       continue;
@@ -569,6 +573,7 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
     bopts.serialPort = opts.serialPort;
     bopts.upload = opts.uploadFirmware;
     bopts.verbose = opts.verbose;
+    bopts.strict = opts.strict;
     bopts.optimizationLevel =
         opts.optimizationLevel >= 0 ? opts.optimizationLevel : 2;
     return buildBoardFirmware(bopts, out, err) ? 0 : 1;
@@ -660,6 +665,7 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
   if (opts.optimizationLevel >= 0) {
     env.setOptimizationLevel(opts.optimizationLevel);
   }
+  env.setStrict(opts.strict);
 
   if (opts.verbose) {
     out << "Compiling " << opts.inputFiles.size() << " Stride file(s):\n";

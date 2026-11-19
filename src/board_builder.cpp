@@ -708,6 +708,7 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
     }
     env.setOptimizationLevel(opts.optimizationLevel >= 0 ? opts.optimizationLevel : 2);
     env.setTarget(triple, cpu, "");
+    env.setStrict(opts.strict);
     env.setCacheLine(static_cast<unsigned>(
         std::max<int64_t>(hw->intProperty("cacheLine").value_or(0), 0)));
     if (!opts.boardOverride.empty()) {
