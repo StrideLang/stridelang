@@ -10,6 +10,7 @@
 #include "stride/stridejit/strideenvironment.hpp"
 #include "stride/utils/astfunctions.h"
 #include "stride/utils/astquery.h"
+#include "stride/utils/cachemanager.h"
 
 #ifdef STRIDEC_EMBEDDED_RUNTIME
 #include "stridec/embedded_runtime.hpp"
@@ -746,13 +747,18 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
     env.emitDomainStateBuffers();
     // Where each variable lives in the firmware's memory: domain state
     // blocks (__stride_<Domain>_state) and globals, by ELF symbol. A host
-    // tool reads a memory or state dump with it.
+    // tool reads a memory or state dump with it. It goes in the program's
+    // .strdcache, one per board, so the source folder stays clean.
     {
-      std::filesystem::path layoutPath = hexPath;
-      layoutPath.replace_extension(".layout.json");
+      const std::filesystem::path layoutPath =
+          strd::CacheManager::instance().getCacheFilePath(
+              opts.inputFile, hw->name(), ".layout.json");
       std::ofstream layout(layoutPath, std::ios::binary);
       if (layout) {
         layout << env.getProgramLayout().toJson();
+        if (opts.verbose) {
+          out << "Layout: " << layoutPath.string() << "\n";
+        }
       } else {
         err << "stride: warning: could not write " << layoutPath.string()
             << "\n";
