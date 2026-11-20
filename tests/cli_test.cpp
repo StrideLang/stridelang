@@ -475,25 +475,95 @@ TEST_F(StridecDriverTest, ExamplesBuild) {
     EXPECT_TRUE(std::filesystem::exists(entry.path() / "README.md"))
         << "example " << name << " has no README.md";
 
-    std::filesystem::path tempDir =
-        std::filesystem::temp_directory_path(ec) / ("stride_example_" + name);
-    std::filesystem::remove_all(tempDir, ec);
-    std::filesystem::create_directories(tempDir, ec);
+    auto build = [&](const std::filesystem::path &input,
+                     const std::string &label) {
+      std::filesystem::path tempDir =
+          std::filesystem::temp_directory_path(ec) / ("stride_example_" + label);
+      std::filesystem::remove_all(tempDir, ec);
+      std::filesystem::create_directories(tempDir, ec);
+      std::ostringstream exampleOut;
+      std::ostringstream exampleErr;
+      strd::BoardBuildOptions bopts;
+      bopts.inputFile = input.string();
+      bopts.outputFile = (tempDir / (name + ".hex")).string();
+      bopts.buildDir = (tempDir / "build").string();
+      bopts.strideRoot = strideRoot;
+      EXPECT_TRUE(strd::buildBoardFirmware(bopts, exampleOut, exampleErr))
+          << label << ": " << exampleErr.str();
+      EXPECT_TRUE(std::filesystem::exists(tempDir / (name + ".hex"))) << label;
+      std::filesystem::remove_all(tempDir, ec);
+      ++built;
+    };
+    build(program, name);
 
-    std::ostringstream exampleOut;
-    std::ostringstream exampleErr;
-    strd::BoardBuildOptions bopts;
-    bopts.inputFile = program.string();
-    bopts.outputFile = (tempDir / (name + ".hex")).string();
-    bopts.buildDir = (tempDir / "build").string();
-    bopts.strideRoot = strideRoot;
-    EXPECT_TRUE(strd::buildBoardFirmware(bopts, exampleOut, exampleErr))
-        << name << ": " << exampleErr.str();
-    EXPECT_TRUE(std::filesystem::exists(tempDir / (name + ".hex"))) << name;
-    std::filesystem::remove_all(tempDir, ec);
-    ++built;
+    // Every other hardware file in the project (BlinkRigMega.stride next to
+    // BlinkRig.stride) is another board for the same program: build it with
+    // `use ... on <Rig>` and `import <Rig> as <DefaultRig>`, as the hardware
+    // file's comment tells a reader to.
+    std::ifstream programIn(program);
+    std::string source((std::istreambuf_iterator<char>(programIn)),
+                       std::istreambuf_iterator<char>());
+    programIn.close();
+    auto usePos = source.find("\nuse ");
+    ASSERT_NE(usePos, std::string::npos) << name << " has no use line";
+    auto onPos = source.find(" on ", usePos);
+    ASSERT_NE(onPos, std::string::npos) << name << " has no use ... on <Board>";
+    auto lineEnd = source.find_first_of("\r\n", onPos);
+    const std::string defaultRig = source.substr(onPos + 4, lineEnd - onPos - 4);
+    for (const auto &file : std::filesystem::directory_iterator(entry.path())) {
+      const std::string stem = file.path().stem().string();
+      if (file.path().extension() != ".stride" || stem == name ||
+          stem == defaultRig) {
+        continue;
+      }
+      std::ifstream rigIn(file.path());
+      std::string rigText((std::istreambuf_iterator<char>(rigIn)),
+                          std::istreambuf_iterator<char>());
+      if (rigText.find("hardwareBoard " + stem + " ") == std::string::npos) {
+        continue;
+      }
+      std::string variant = source;
+      variant.replace(onPos + 4, defaultRig.size(), stem);
+      auto importPos = variant.find("import " + defaultRig + "\n");
+      if (importPos == std::string::npos) {
+        importPos = variant.find("import " + defaultRig + "\r");
+      }
+      ASSERT_NE(importPos, std::string::npos)
+          << name << " does not import " << defaultRig;
+      variant.replace(importPos, 7 + defaultRig.size(),
+                      "import " + stem + " as " + defaultRig);
+      // The variant sits next to the hardware files, so imports find them
+      auto variantPath = entry.path() / (".variant_" + stem + ".stride");
+      {
+        std::ofstream variantOut(variantPath);
+        variantOut << variant;
+      }
+      build(variantPath, name + "_" + stem);
+      std::filesystem::remove(variantPath, ec);
+    }
   }
   EXPECT_GT(built, 0);
+}
+
+// The Mega's ports H to L are above the 8-bit data space: the header says
+// so, and its 70 pins number D0-D53 then A0-A15.
+TEST_F(StridecDriverTest, ArduinoMegaBoardHeader) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  strd::HardwareResolver resolver(strideRoot);
+  std::string errMsg;
+  auto mega = resolver.resolve("AVR", "ArduinoMega2560", &errMsg);
+  ASSERT_TRUE(mega.has_value()) << errMsg;
+  std::string header = strd::generateBoardHeader(*mega, errMsg);
+  ASSERT_FALSE(header.empty()) << errMsg;
+  EXPECT_NE(header.find("#define STRIDE_PIN_COUNT 70"), std::string::npos)
+      << header;
+  EXPECT_NE(header.find("#define STRIDE_PIN_REG_WIDE 1"), std::string::npos)
+      << header;
+
+  auto uno = resolver.resolve("AVR", "ArduinoUno", &errMsg);
+  ASSERT_TRUE(uno.has_value()) << errMsg;
+  EXPECT_EQ(strd::generateBoardHeader(*uno, errMsg).find("STRIDE_PIN_REG_WIDE"),
+            std::string::npos);
 }
 
 TEST_F(StridecDriverTest, ArduinoUnoBoardHeaderAndFirmwareBuild) {
