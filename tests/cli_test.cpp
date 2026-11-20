@@ -447,6 +447,55 @@ TEST_F(StridecDriverTest, DebugAndOptimizationFlags) {
   EXPECT_FALSE(opts.unrollLoops);
 }
 
+// Every example project in strideroot/examples builds: an AVR example is
+// built into firmware (examples/AVR/<Project>/<Project>.stride), in a
+// temporary directory so the examples folder stays clean.
+TEST_F(StridecDriverTest, ExamplesBuild) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  std::filesystem::path avrExamples =
+      std::filesystem::path(strideRoot) / "examples" / "AVR";
+  ASSERT_TRUE(std::filesystem::is_directory(avrExamples)) << avrExamples;
+
+  const std::string avrGcc = strd::findAvrTool("avr-gcc", strideRoot);
+  const std::string avrObjcopy = strd::findAvrTool("avr-objcopy", strideRoot);
+  if (avrGcc.empty() || avrObjcopy.empty()) {
+    GTEST_SKIP() << "avr-gcc / avr-objcopy not installed";
+  }
+
+  int built = 0;
+  std::error_code ec;
+  for (const auto &entry : std::filesystem::directory_iterator(avrExamples)) {
+    if (!entry.is_directory()) {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    std::filesystem::path program = entry.path() / (name + ".stride");
+    ASSERT_TRUE(std::filesystem::exists(program))
+        << "example " << name << " has no " << name << ".stride";
+    EXPECT_TRUE(std::filesystem::exists(entry.path() / "README.md"))
+        << "example " << name << " has no README.md";
+
+    std::filesystem::path tempDir =
+        std::filesystem::temp_directory_path(ec) / ("stride_example_" + name);
+    std::filesystem::remove_all(tempDir, ec);
+    std::filesystem::create_directories(tempDir, ec);
+
+    std::ostringstream exampleOut;
+    std::ostringstream exampleErr;
+    strd::BoardBuildOptions bopts;
+    bopts.inputFile = program.string();
+    bopts.outputFile = (tempDir / (name + ".hex")).string();
+    bopts.buildDir = (tempDir / "build").string();
+    bopts.strideRoot = strideRoot;
+    EXPECT_TRUE(strd::buildBoardFirmware(bopts, exampleOut, exampleErr))
+        << name << ": " << exampleErr.str();
+    EXPECT_TRUE(std::filesystem::exists(tempDir / (name + ".hex"))) << name;
+    std::filesystem::remove_all(tempDir, ec);
+    ++built;
+  }
+  EXPECT_GT(built, 0);
+}
+
 TEST_F(StridecDriverTest, ArduinoUnoBoardHeaderAndFirmwareBuild) {
   std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
   strd::HardwareResolver resolver(strideRoot);
