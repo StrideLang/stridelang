@@ -112,8 +112,12 @@ void printHelp(std::ostream &os, const char *progName) {
      << "Board firmware is built by 'stride build' and uploaded by 'stride flash'.\n";
 }
 
+#ifndef STRIDE_VERSION
+#define STRIDE_VERSION "0.1.0"
+#endif
+
 void printVersion(std::ostream &os) {
-  os << "stridec version 1.0.0 (compatible with LLVM/Clang driver interface)\n";
+  os << "stridec version " << STRIDE_VERSION << " (compatible with LLVM/Clang driver interface)\n";
 }
 
 bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts,

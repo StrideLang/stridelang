@@ -1,9 +1,6 @@
-name: Release Build & Cross-Platform Packaging
+name: Release Build & Cross-Platform Packaging (Manual)
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -23,7 +20,7 @@ jobs:
           - os: macos-latest
             generator: "TGZ;ZIP"
             artifact_pattern: "build/*.tar.gz"
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             generator: "TGZ;DEB"
             artifact_pattern: "build/*.deb"
 
@@ -32,6 +29,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Checkout Stride dependencies (for standalone build)
+        uses: actions/checkout@v4
+        with:
+          repository: StrideLang/Stride
+          path: _stride_deps
+          submodules: recursive
+          fetch-depth: 1
+        continue-on-error: true
 
       - name: Checkout Standard Library (strideroot)
         uses: actions/checkout@v4
@@ -46,17 +52,69 @@ jobs:
         with:
           version: 1.11.1
 
-      - name: Setup NSIS (Windows only)
+      - name: Setup Linux LLVM & Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build flex bison llvm-18-dev libllvm18 clang-18
+
+      - name: Setup macOS LLVM & Dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install bison flex llvm@18
+          echo "LLVM_DIR=$(brew --prefix llvm@18)/lib/cmake/llvm" >> $GITHUB_ENV
+          echo "BISON_EXECUTABLE=$(brew --prefix bison)/bin/bison" >> $GITHUB_ENV
+          echo "FLEX_EXECUTABLE=$(brew --prefix flex)/bin/flex" >> $GITHUB_ENV
+
+      - name: Setup Windows Dependencies (NSIS & WinFlexBison)
         if: runner.os == 'Windows'
         run: |
-          choco install nsis -y
+          choco install nsis winflexbison3 -y
 
-      - name: Configure CMake
+      - name: Setup MSVC Environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DSTRIDE_BUILD_TESTS=OFF \
+            -DSTRIDEJIT_BUILD_TESTS=OFF \
+            -DSTRIDEPARSER_BUILD_TESTS=OFF \
+            -DSTRIDEJIT_BUILD_TESTING=OFF \
             -DSTRIDE_OFFICIAL_RELEASE=ON \
+            -DSTRIDEROOT="${{ github.workspace }}/strideroot" \
+            -DLLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm \
+            -DCMAKE_PREFIX_PATH=/usr/lib/llvm-18
+
+      - name: Configure CMake (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSTRIDE_BUILD_TESTS=OFF \
+            -DSTRIDEJIT_BUILD_TESTS=OFF \
+            -DSTRIDEPARSER_BUILD_TESTS=OFF \
+            -DSTRIDEJIT_BUILD_TESTING=OFF \
+            -DSTRIDE_OFFICIAL_RELEASE=ON \
+            -DSTRIDEROOT="${{ github.workspace }}/strideroot" \
+            -DLLVM_DIR="${{ env.LLVM_DIR }}" \
+            -DBISON_EXECUTABLE="${{ env.BISON_EXECUTABLE }}" \
+            -DFLEX_EXECUTABLE="${{ env.FLEX_EXECUTABLE }}"
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DSTRIDE_BUILD_TESTS=OFF `
+            -DSTRIDEJIT_BUILD_TESTS=OFF `
+            -DSTRIDEPARSER_BUILD_TESTS=OFF `
+            -DSTRIDEJIT_BUILD_TESTING=OFF `
+            -DSTRIDEJIT_BUILD_LLVM=ON `
+            -DSTRIDE_OFFICIAL_RELEASE=ON `
             -DSTRIDEROOT="${{ github.workspace }}/strideroot"
 
       - name: Build Stride Toolchain
@@ -94,7 +152,7 @@ jobs:
         if: hashFiles('vscode-stride-lang/package.json') != ''
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: Build .vsix
         if: hashFiles('vscode-stride-lang/package.json') != ''

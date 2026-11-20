@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(stridelang VERSION 1.0.0 LANGUAGES C CXX)
+project(stridelang VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,27 +9,39 @@ if (STRIDE_OFFICIAL_RELEASE)
     add_compile_definitions(STRIDE_OFFICIAL_RELEASE=1)
 endif()
 
+# Prevent FetchContent googletest from registering install rules into CPack packages
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+set(INSTALL_GMOCK OFF CACHE BOOL "" FORCE)
+
 # Dependencies -------------------------------------------------------------
 if (NOT TARGET StrideJit)
     # 1. Check for prebuilt binaries from an existing build directory
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindPrebuiltStride.cmake")
 
     if (NOT STRIDE_PREBUILT_FOUND)
-        # 2. Fallback: Automatic local sibling discovery to build from source
+        # 2. Fallback: Automatic local sibling or _stride_deps discovery to build from source
+        set(_STRIDE_DEPS_DIR "")
         if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../strideparser/CMakeLists.txt" AND
             EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../stridejit/CMakeLists.txt")
-            message(STATUS "stridelang: building dependencies from local source subdirectories")
+            set(_STRIDE_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
+        elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/_stride_deps/strideparser/CMakeLists.txt" AND
+                EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/_stride_deps/stridejit/CMakeLists.txt")
+            set(_STRIDE_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/_stride_deps")
+        endif()
+
+        if (_STRIDE_DEPS_DIR)
+            message(STATUS "stridelang: building dependencies from ${_STRIDE_DEPS_DIR}")
             if (NOT TARGET StrideParser)
-                add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../strideparser" strideparser_build)
+                add_subdirectory("${_STRIDE_DEPS_DIR}/strideparser" strideparser_build)
             endif()
             if (NOT TARGET StrideUtils)
-                add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../strideutils" strideutils_build)
+                add_subdirectory("${_STRIDE_DEPS_DIR}/strideutils" strideutils_build)
             endif()
             if (NOT TARGET StrideGen)
-                add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../stridegen" stridegen_build)
+                add_subdirectory("${_STRIDE_DEPS_DIR}/stridegen" stridegen_build)
             endif()
             if (NOT TARGET StrideJit)
-                add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../stridejit" stridejit_build)
+                add_subdirectory("${_STRIDE_DEPS_DIR}/stridejit" stridejit_build)
             endif()
         else()
             # 3. Fallback: Installed package resolution
@@ -49,6 +61,10 @@ add_library(stridec_driver STATIC
 
 target_include_directories(stridec_driver PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_compile_definitions(stridec_driver PUBLIC
+    STRIDE_VERSION="${PROJECT_VERSION}"
 )
 
 target_link_libraries(stridec_driver PUBLIC
@@ -136,6 +152,10 @@ install(TARGETS stride stridec
 if (NOT STRIDEROOT)
     if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../strideroot")
         set(STRIDEROOT "${CMAKE_CURRENT_SOURCE_DIR}/../strideroot" CACHE PATH "Path to strideroot")
+    elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/strideroot")
+        set(STRIDEROOT "${CMAKE_CURRENT_SOURCE_DIR}/strideroot" CACHE PATH "Path to strideroot")
+    elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/_stride_deps/strideroot")
+        set(STRIDEROOT "${CMAKE_CURRENT_SOURCE_DIR}/_stride_deps/strideroot" CACHE PATH "Path to strideroot")
     elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../strideroot")
         set(STRIDEROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../strideroot" CACHE PATH "Path to strideroot")
     elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../../strideroot")
@@ -146,6 +166,7 @@ if (NOT STRIDEROOT)
 endif()
 
 if (STRIDEROOT AND EXISTS "${STRIDEROOT}")
+    file(TO_CMAKE_PATH "${STRIDEROOT}" STRIDEROOT)
     message(STATUS "stridelang: packaging standard library from ${STRIDEROOT}")
     install(DIRECTORY "${STRIDEROOT}/"
         DESTINATION strideroot
@@ -239,11 +260,15 @@ set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/StrideLang/stridelang")
+set(CPACK_PACKAGE_CONTACT "Stride Language Project <https://github.com/StrideLang/Stride>")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Stride Language Project")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "Stride")
 set(CPACK_STRIP_FILES TRUE)
 
 # Component grouping
 set(CPACK_COMPONENTS_ALL Compiler StandardLibrary VSCode Development Examples Documentation)
+set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
+set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
 set(CPACK_COMPONENT_COMPILER_DISPLAY_NAME "Stride Unified Toolchain (stride & stridec)")
 set(CPACK_COMPONENT_COMPILER_DESCRIPTION "Compiler, runtime driver, and toolchain manager binaries.")
 set(CPACK_COMPONENT_COMPILER_REQUIRED ON)
@@ -272,32 +297,39 @@ set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
 set(CPACK_NSIS_HELP_LINK "https://github.com/StrideLang/stridelang")
 set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/StrideLang/stridelang")
 
-set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [=[
-  WriteRegStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT" "$INSTDIR\strideroot"
-  WriteRegStr HKCU "Environment" "STRIDEROOT" "$INSTDIR\strideroot"
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+# Write NSIS install/uninstall commands into a CPack project config file so
+# CPackConfig.cmake does not try to re-parse raw NSIS $variables and quotes.
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/CPackOptions.cmake" [=[
+if(CPACK_GENERATOR MATCHES "NSIS")
+  set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [==[
+    WriteRegStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT" "$INSTDIR\strideroot"
+    WriteRegStr HKCU "Environment" "STRIDEROOT" "$INSTDIR\strideroot"
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 
-  ClearErrors
-  SearchPath $R0 "code.cmd"
-  IfErrors 0 InstallVsCodeExt
-  SearchPath $R0 "code.exe"
-  IfErrors 0 InstallVsCodeExt
-  IfFileExists "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" 0 SkipVsCodeExt
-  StrCpy $R0 "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd"
+    ClearErrors
+    SearchPath $R0 "code.cmd"
+    IfErrors 0 InstallVsCodeExt
+    SearchPath $R0 "code.exe"
+    IfErrors 0 InstallVsCodeExt
+    IfFileExists "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" 0 SkipVsCodeExt
+    StrCpy $R0 "$LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd"
 
-InstallVsCodeExt:
-  IfFileExists "$INSTDIR\vscode\stride-language.vsix" 0 SkipVsCodeExt
-  DetailPrint "Installing Stride VS Code Extension..."
-  ExecWait '"$R0" --install-extension "$INSTDIR\vscode\stride-language.vsix" --force'
+  InstallVsCodeExt:
+    IfFileExists "$INSTDIR\vscode\stride-language.vsix" 0 SkipVsCodeExt
+    DetailPrint "Installing Stride VS Code Extension..."
+    ExecWait '"$R0" --install-extension "$INSTDIR\vscode\stride-language.vsix" --force'
 
-SkipVsCodeExt:
+  SkipVsCodeExt:
+  ]==])
+
+  set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [==[
+    DeleteRegValue HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT"
+    DeleteRegValue HKCU "Environment" "STRIDEROOT"
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+  ]==])
+endif()
 ]=])
-
-set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [=[
-  DeleteRegValue HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "STRIDEROOT"
-  DeleteRegValue HKCU "Environment" "STRIDEROOT"
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
-]=])
+set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/CPackOptions.cmake")
 
 # Package generators per platform
 if (WIN32)

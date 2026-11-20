@@ -56,7 +56,7 @@ stridec --emit-arduino-lib=SensorDSP sensor_dsp.stride
 
 #### In `MODULE.bazel`:
 ```python
-bazel_dep(name = "rules_stride", version = "1.0.0")
+bazel_dep(name = "rules_stride", version = "0.1.0")
 ```
 
 #### In `BUILD.bazel`:
