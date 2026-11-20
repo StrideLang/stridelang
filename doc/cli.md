@@ -39,6 +39,8 @@ stride <file.stride> [compiler options...]   # Shorthand for `stride compile`
 
 These commands inspect the `.stride` file's `use <System> version <ver> on <Board>` declaration (or `--boardOverride`), resolve the hardware chain (`HardwareResolver`: board → device → core), generate `stride_board.h`, compile the target C runtime (e.g. `stride_avr_runtime.c`), link with `avr-gcc`, emit `.elf` + `.hex` via `avr-objcopy`, print `avr-size`, and optionally flash via `avrdude`.
 
+The board is looked up next to the program first, so a project can keep its wiring in its own hardware file (`BlinkRig.stride` declaring `hardwareBoard BlinkRig { overlays: ArduinoUno }` and its `gpioPin`s) and build with `use AVR version 1.0 on BlinkRig`. See [Pins and GPIO](language/systems_and_platforms.md#6-pins-and-gpio).
+
 | Option | Description |
 | :--- | :--- |
 | `-o <file.hex\|file.elf>` | Output firmware path (default: `<input>.hex`). Both `.elf` and `.hex` are produced alongside one another. |

@@ -117,3 +117,82 @@ system DualCoreAudioSystem {
 ```
 
 For detailed specifications on cross-domain data transfer, shared memory, semaphore hand-offs, parameterized connections, and symmetrical native platform entities, see [Multi-Domain Computation, Shared Memory & System Connections](file:///c:/Users/Andres/source/repos/boardgame/libgame/external/stridelang/doc/language/multi_domain_computation.md).
+
+---
+
+## 6. Pins and GPIO
+
+A program names the signals it uses, and a hardware file next to it says which board pin each signal is on and how it is set up. Moving to another board means editing the hardware file and the `use` line; the program does not change.
+
+```stride
+# BlinkRig.stride: the project's hardware file, next to blink.stride
+package BlinkRig
+
+import Gpio            # Gpio::PinInput, Gpio::PullUp, ...
+import ArduinoUno      # ArduinoUno::D2, ArduinoUno::LED, ...
+
+hardwareBoard BlinkRig {
+    overlays: ArduinoUno               # platform is inherited
+}
+
+gpioPin Button { pin: ArduinoUno::D2  mode: Gpio::PinInput  pull: Gpio::PullUp activeLow: on }
+gpioPin Status { pin: ArduinoUno::LED mode: Gpio::PinOutput initial: off }
+gpioPin Relay  { pin: ArduinoUno::D7  mode: Gpio::PinOutput outputType: Gpio::OutputOpenDrain }
+```
+
+```stride
+# blink.stride
+use AVR version 1.0 on BlinkRig
+import DigitalIO
+import BlinkRig
+
+switch Blink { default: off domain: PlatformLoopDomain }
+Blink >> Not() >> Blink;
+Blink >> DigitalIO::Led(pin: BlinkRig::Status);
+0.5 >> Sleep(domain: PlatformLoopDomain);
+
+switch Pressed { default: off domain: PlatformTimerDomain }
+BlinkRig::Button >> DigitalIO::DigitalIn() >> Pressed;
+Pressed >> DigitalIO::DigitalOut(pin: BlinkRig::Relay);
+```
+
+### 6.1 Files and names
+
+* Every file imports what it uses and every imported name carries its package: `Gpio::PullUp`, `ArduinoUno::D2`, `BlinkRig::Status`, `DigitalIO::Led`. Hardware files declare their package (`package ArduinoUno`).
+* While a `use <Platform>` system is active, imports are also looked up in `platforms/<Platform>/boards`, `platforms/<Platform>/devices` and `cores`, after the program's own directory.
+* `use ... on BlinkRig` selects the build target. `BlinkRig` is found next to the program first, so a project can describe its own board (or, for an FPGA soft core, its own device) on top of a stock one.
+
+### 6.2 Three layers
+
+| Where | Declares |
+|---|---|
+| Device (`ATmega328P.stride`) | `gpioPort`s with their registers and `gpioField`s (which register field sets mode, pull, ...), `pinFeatures` (what each chip pin adds: analog channel, interrupt kinds, `pinRoute`s to peripheral functions, `reservedBy`), `gpio` (values done in software, such as AVR's open drain), and the chip's pin functions (`uartTx Uart0Tx { peripheral: "Usart0" }`) |
+| Board (`ArduinoUno.stride`) | `pin` labels mapped to chip pins: `pin D13 { port: PortB bit: 5 }`. Two labels may name one pin (`LED` and `D13`). |
+| Project (`BlinkRig.stride`) | `gpioPin`s: how the project uses a board pin |
+
+### 6.3 gpioPin options
+
+Every option is a group of constants in `library/1.0/Gpio.stride` (a `typeClass` of constants), so the schema checks the names:
+
+| Key | Values | Default |
+|---|---|---|
+| `mode` (required) | `PinInput`, `PinOutput`, `PinFunction`, `PinAnalog`, `PinDisabled` | |
+| `outputType` | `OutputPushPull`, `OutputOpenDrain`, `OutputOpenSource` | `OutputPushPull` |
+| `pull` | `PullNone`, `PullUp`, `PullDown`, `PullBusKeeper` | `PullNone` |
+| `drive` | `DriveDefault`, `DriveLow`, `DriveMedium`, `DriveHigh`, `DriveMax` | `DriveDefault` |
+| `slew` | `SlewDefault`, `SlewSlow`, `SlewMedium`, `SlewFast`, `SlewMax` | `SlewDefault` |
+| `interrupt` | `InterruptNone`, `InterruptRising`, `InterruptFalling`, `InterruptBothEdges`, `InterruptLevelLow`, `InterruptLevelHigh` (checked, not generated yet) | `InterruptNone` |
+| `ioStandard` | `IoDefault`, `IoLvcmos33`, ... `IoLvds`, `IoTmds` (FPGA) | `IoDefault` |
+| `function` | a pin function of the device, such as `ATmega328P::Uart0Tx`; with `PinFunction` | |
+| `activeLow`, `initial` | `on`/`off` | `off` |
+
+### 6.4 What the compiler checks and does
+
+* A value is supported on a pin exactly when one of its port's `gpioField`s has a code for it, or the device lists it in `gpio.emulated`. Anything else is an error that names the pin and the supported values, for example `gpioPin Button: pull PullDown is not supported by ATmega328P pin PortD.2 (supported: PullNone, PullUp)`.
+* It also reports keys that don't fit the mode, a function the pin can't carry, a pin the runtime reserves (D0 and D1 on an Uno), two gpioPins using one chip pin differently, a `DigitalOut` on an input pin and a `DigitalIn` on an analog pin.
+* Every gpioPin is set up once at startup in `RootDomain`'s `onLoad`: port clocks, initial levels, pulls/drive/slew, function select, then mode and direction, so outputs never glitch.
+* `DigitalOut`, `DigitalIn` and `Led` read the registers through the framework's `_GpioWrite` and `_GpioRead`. The compiler fills in each pin's addresses and masks, so programs never see them. Under the JIT framework the registers are simulated, so a board's program runs and can be tested on the desktop.
+
+### 6.5 Cost on AVR
+
+The addresses are constants, so there is no call and no table lookup. Writing a constant level (the startup writes, `on >> DigitalOut(...)`) is a single `sbi`/`cbi`. Writing a level known only at run time is a read-modify-write of the constant register (`in`, `andi`/`ori`, `out`): a few cycles, and not atomic against an interrupt that writes the same port. On ports with set/clear registers (STM32 BSRR, RP2040 SIO, nRF OUTSET/OUTCLR) every write is one store.

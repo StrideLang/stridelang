@@ -625,6 +625,14 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
   }
 
   HardwareResolver resolver(strideRoot);
+  // A project's own board (a hardware file next to the program) comes first
+  {
+    std::error_code pathErr;
+    auto programDir = std::filesystem::absolute(opts.inputFile, pathErr).parent_path();
+    if (!pathErr) {
+      resolver.addSearchDirectory(programDir.generic_string());
+    }
+  }
   std::string hwErr;
   auto hw = resolver.resolve(spec.platformName, spec.boardName, &hwErr);
   if (!hw) {

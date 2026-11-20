@@ -609,6 +609,12 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
     if (inspectProgramBoard(opts.inputFiles[0], effectiveRoot, opts.boardName,
                             spec, inspectErr)) {
       HardwareResolver hwResolver(effectiveRoot);
+      std::error_code pathErr;
+      auto programDir =
+          std::filesystem::absolute(opts.inputFiles[0], pathErr).parent_path();
+      if (!pathErr) {
+        hwResolver.addSearchDirectory(programDir.generic_string());
+      }
       if (auto hw = hwResolver.resolve(spec.platformName, spec.boardName)) {
         opts.targetTriple = hw->stringProperty("triple");
         if (opts.targetCPU.empty()) {

@@ -274,3 +274,36 @@ connection _PCToPicoUart {
     - Connection parameters (e.g. `.port`) parameterize constants (`constant HostPort { value: .port }`) or substituted templates.
 3. **Automated AST Splicing**:
     - `StrideSystem::generateDomainConnections` sets the appropriate `"domain"` and `"framework"` properties on each entity and splices them into the compilation AST, allowing downstream builders (`stridejit` or `stridec`) to compile them transparently.
+
+---
+
+## 7. Standard Platform Domains
+
+`PlatformDomain` means something different on each framework (AVR's tick, the desktop's audio, the JIT's one-shot root). Programs that want to run on several platforms use the standard aliases instead. Each has one meaning; a framework defines only the ones it supports, and using one it lacks is a compile error.
+
+| Alias | Meaning | AVR | JIT |
+|---|---|---|---|
+| `PlatformLoopDomain` | Runs again as soon as it finishes, like Arduino `loop()`. `Sleep` suspends only this domain. | `AvrLoopDomain` | `JitLoopDomain` |
+| `PlatformTimerDomain` | Runs periodically from a timer at `PlatformTimerRate` | `AvrTickDomain` | `JitTimerDomain` |
+| `PlatformTimerRate` | The timer's rate in Hz | `1000` | `1000` |
+| `PlatformAudioDomain` | Runs once per audio sample at `PlatformAudioRate` | — | `JitAudioDomain` |
+
+`RootDomain` already means "runs once at startup" everywhere and needs no alias. A `domain:`, `parentDomain:` or `Sleep(domain:)` naming an alias is replaced by the domain it stands for before anything else is resolved.
+
+### 7.1 How domains run relative to each other
+
+Every `_domainDefinition` can declare `execution`, one of the constants of `_DomainExecution` (`none` means cooperative):
+
+| Value | Meaning |
+|---|---|
+| `ExecutionCooperative` | Runs on the same thread as its siblings, between their process calls. A long computation in a sibling delays it. |
+| `ExecutionInterrupt` | Runs from an interrupt handler and preempts cooperative domains. |
+| `ExecutionThread` | Runs on its own OS thread or core; shared signals go through `synchronization` declarations. |
+| `ExecutionInline` | Runs inside its parent's process call (`preSubdomains`, `postSubdomains`). |
+| `ExecutionHardware` | Runs without the CPU: an FPGA clock domain, a PIO state machine, a DMA stream. |
+
+On AVR both standard domains are cooperative: `main()` runs every pending timer tick, then one loop iteration. A loop iteration that computes for 20 ms makes the timer run 20 ticks late, back to back; past 255 pending ticks, ticks are lost. Keep loop iterations short and use `Sleep` rather than busy waits.
+
+### 7.2 Sleep
+
+A domain declares how it sleeps with `sleepModule` (a platformModule taking a tick count) and `sleepRate` (ticks per second). `Sleep(domain: D)` calls `D`'s `sleepModule`. On AVR, `Sleep(domain: PlatformLoopDomain)` suspends only the loop: `main()` skips it until the time has passed and keeps running timer ticks meanwhile. A domain without `sleepModule` keeps counting ticks (a subdomain) or blocks.
