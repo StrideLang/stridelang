@@ -75,15 +75,13 @@ void printHelp(std::ostream &os, const char *progName) {
      << "  -fvectorize, -fno-vectorize          Enable / disable vectorization\n"
      << "  -funroll-loops, -fno-unroll-loops    Enable / disable loop unrolling\n"
      << "  --build-type=<type>                  Build preset: debug, release, relwithdebinfo, minsizerel\n"
-     << "  -c                                   Compile to object file (do not link board firmware)\n\n"
-     << "Output, Firmware & Upload Options:\n"
-     << "  -o <file>                            Output object (.o/.obj), archive (.a), or firmware (.elf/.hex)\n"
+     << "  -c                                   Compile to an object file (the default; kept for Clang compatibility)\n\n"
+     << "Output Options:\n"
+     << "  -o <file>                            Output object (.o/.obj) or archive (.a)\n"
      << "  --emit-header=<file>, --header-out=<file>\n"
      << "                                       Output C interface header file (.h)\n"
      << "  --domain=<name>, -domain <name>      Specific domain to generate header for\n"
-     << "  --upload, --flash                    Build and upload board firmware (e.g. via avrdude)\n"
-     << "  --strict                             Make a String write that can be cut off an error\n"
-     << "  --port=<port>, -P <port>             Serial port for board upload (auto-detected if omitted)\n\n"
+     << "  --strict                             Make a String write that can be cut off an error\n\n"
      << "Arduino Pre-built Library Options:\n"
      << "  --emit-arduino-lib=<dir>, --arduino-lib=<dir>\n"
      << "                                       Output an Arduino-compatible precompiled library bundle\n"
@@ -110,8 +108,8 @@ void printHelp(std::ostream &os, const char *progName) {
      << "  " << progName << " -c sensor.stride -o sensor.o --emit-header=sensor.h\n"
      << "  " << progName << " -c math.stride filters.stride -o dsp.o --emit-header=dsp.h --emit-all-functions\n"
      << "  " << progName << " -c dsp.stride --target=thumbv6m-none-eabi -mcpu=cortex-m0plus -o dsp.o --emit-header=dsp.h\n"
-     << "  " << progName << " blinky.stride --boardOverride=ArduinoUno -o blinky.hex\n"
-     << "  " << progName << " --emit-arduino-lib=SensorDSP sensor_dsp.stride\n";
+     << "  " << progName << " --emit-arduino-lib=SensorDSP sensor_dsp.stride\n\n"
+     << "Board firmware is built by 'stride build' and uploaded by 'stride flash'.\n";
 }
 
 void printVersion(std::ostream &os) {
@@ -145,16 +143,15 @@ bool parseCommandLine(const std::vector<std::string> &args, StridecOptions &opts
     } else if (arg == "--emit-domain-state") {
       opts.emitDomainState = true;
       continue;
-    } else if (arg == "--upload" || arg == "--flash") {
-      opts.uploadFirmware = true;
-      continue;
+    } else if (arg == "--upload" || arg == "--flash" || arg == "-P" ||
+               arg == "--port" || arg.rfind("--port=", 0) == 0) {
+      errorMessage = "error: stridec does not build or upload firmware ('" +
+                     arg + "'); use 'stride flash <file.stride>'";
+      return false;
     } else if (arg == "--strict") {
       opts.strict = true;
       continue;
     } else if (parseOptionWithVal(arg, i, args, "--boardOverride", opts.boardName)) {
-      continue;
-    } else if (parseOptionWithVal(arg, i, args, "--port", opts.serialPort) ||
-               parseOptionWithVal(arg, i, args, "-P", opts.serialPort)) {
       continue;
     } else if (arg == "-g" || arg == "-g2" || arg == "-g3") {
       opts.debugInfo = true;
@@ -548,8 +545,8 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
   }
 
   if (opts.outputFile.empty() && opts.headerFile.empty() &&
-      opts.arduinoLibDir.empty() && !opts.uploadFirmware) {
-    err << "stridec: error: no output specified. Use -o <file.o|.hex|.elf>, --emit-header=<file.h>, --emit-arduino-lib=<dir>, or --upload\n";
+      opts.arduinoLibDir.empty()) {
+    err << "stridec: error: no output specified. Use -o <file.o|.a>, --emit-header=<file.h>, or --emit-arduino-lib=<dir>\n";
     return 1;
   }
 
@@ -558,25 +555,14 @@ int runStridec(const std::vector<std::string> &args, std::ostream &out,
            str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
   };
 
-  if (!opts.compileOnly &&
-      (opts.uploadFirmware || endsWith(opts.outputFile, ".hex") ||
-       endsWith(opts.outputFile, ".elf"))) {
-    BoardBuildOptions bopts;
-    bopts.inputFile = opts.inputFiles[0];
-    bopts.outputFile = opts.outputFile;
-    bopts.strideRoot = opts.strideRoot;
-    bopts.boardOverride = opts.boardName;
-    bopts.includeDirs = opts.includeDirs;
-    bopts.featureToggles = opts.featureToggles;
-    bopts.disabledFeatures = opts.disabledFeatures;
-    bopts.noDefaultFeatures = opts.noDefaultFeatures;
-    bopts.serialPort = opts.serialPort;
-    bopts.upload = opts.uploadFirmware;
-    bopts.verbose = opts.verbose;
-    bopts.strict = opts.strict;
-    bopts.optimizationLevel =
-        opts.optimizationLevel >= 0 ? opts.optimizationLevel : 2;
-    return buildBoardFirmware(bopts, out, err) ? 0 : 1;
+  // Linked firmware belongs to 'stride build'; with -c an .elf name is just an
+  // object file.
+  if (endsWith(opts.outputFile, ".hex") ||
+      (!opts.compileOnly && endsWith(opts.outputFile, ".elf"))) {
+    err << "stridec: error: stridec does not build firmware ('-o "
+        << opts.outputFile << "'); use 'stride build <file.stride> -o "
+        << opts.outputFile << "'\n";
+    return 1;
   }
 
   // Handle Arduino precompiled library output if requested

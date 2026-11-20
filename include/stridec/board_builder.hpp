@@ -60,4 +60,14 @@ bool buildBoardFirmware(const BoardBuildOptions &opts,
                         std::ostream &out = std::cout,
                         std::ostream &err = std::cerr);
 
+void printBoardBuildHelp(std::ostream &os, bool upload);
+
+// The 'stride build' (upload = false) and 'stride flash' (upload = true)
+// commands: parses their arguments and runs buildBoardFirmware. This is the
+// only command line that builds or uploads firmware.
+int runBoardBuild(const std::vector<std::string> &args,
+                  const std::string &strideRoot, bool upload,
+                  std::ostream &out = std::cout,
+                  std::ostream &err = std::cerr);
+
 } // namespace strd

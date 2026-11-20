@@ -931,4 +931,129 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
   return true;
 }
 
+void printBoardBuildHelp(std::ostream &os, bool upload) {
+  os << "Usage: stride " << (upload ? "flash" : "build")
+     << " [options] <file.stride>\n\n"
+     << (upload ? "Build board firmware and upload it to a connected board.\n\n"
+                : "Build board firmware (.hex and .elf). 'stride flash' also uploads it.\n\n")
+     << "Options:\n"
+     << "  -o <file.hex|file.elf>   Output firmware file (default: <input>.hex)\n"
+     << "  --boardOverride=<name>   Override target board from 'use <System> on <Board>'\n";
+  if (upload) {
+    os << "  --port=<port>, -P <port> Serial port for upload (auto-detected if omitted)\n";
+  }
+  os << "  --build-dir=<dir>        Directory for intermediate artifacts\n"
+     << "  -O0, -O1, -O2, -O3, -Os, -Oz\n"
+     << "                           Optimization level (default: 2)\n"
+     << "  --strict                 Make a String write that can be cut off an error\n"
+     << "  -I <dir>                 Add include search path\n"
+     << "  -D <name>, --feature=<name>, --features=<list>\n"
+     << "                           Enable feature(s) or variant(s)\n"
+     << "  --no-feature=<name>      Disable feature or variant\n"
+     << "  --no-default-features    Disable declared default features\n"
+     << "  --strideroot=<dir>       Custom STRIDEROOT directory\n"
+     << "  -v, --verbose            Verbose build and upload output\n"
+     << "  -h, --help               Show this help message\n";
+}
+
+int runBoardBuild(const std::vector<std::string> &args,
+                  const std::string &strideRoot, bool upload, std::ostream &out,
+                  std::ostream &err) {
+  const std::string command = upload ? "flash" : "build";
+  BoardBuildOptions opts;
+  opts.strideRoot = strideRoot;
+  opts.upload = upload;
+  for (size_t i = 0; i < args.size(); ++i) {
+    const std::string &arg = args[i];
+    bool missingValue = false;
+    auto nextVal = [&](const std::string &flag, std::string &val) -> bool {
+      if (arg == flag) {
+        if (i + 1 < args.size()) {
+          val = args[++i];
+        } else {
+          missingValue = true;
+        }
+        return true;
+      }
+      if (arg.rfind(flag + "=", 0) == 0) {
+        val = arg.substr(flag.size() + 1);
+        return true;
+      }
+      return false;
+    };
+    std::string port;
+    if (arg == "-h" || arg == "--help") {
+      printBoardBuildHelp(out, upload);
+      return 0;
+    } else if (nextVal("-o", opts.outputFile)) {
+    } else if (nextVal("--boardOverride", opts.boardOverride)) {
+    } else if (nextVal("--port", port) || nextVal("-P", port)) {
+      if (!upload) {
+        err << "stride: error: '" << arg
+            << "' only applies to uploading; use 'stride flash'\n";
+        return 1;
+      }
+      opts.serialPort = port;
+    } else if (nextVal("--build-dir", opts.buildDir)) {
+    } else if (nextVal("--strideroot", opts.strideRoot)) {
+    } else if (arg == "--upload" || arg == "--flash") {
+      err << "stride: error: unknown option '" << arg
+          << "'; use 'stride flash' to build and upload\n";
+      return 1;
+    } else if (arg == "--strict") {
+      opts.strict = true;
+    } else if (arg == "--no-default-features") {
+      opts.noDefaultFeatures = true;
+    } else if (arg == "-v" || arg == "--verbose") {
+      opts.verbose = true;
+    } else if (arg == "-O0") {
+      opts.optimizationLevel = 0;
+    } else if (arg == "-O1") {
+      opts.optimizationLevel = 1;
+    } else if (arg == "-O2" || arg == "-Os" || arg == "-Oz") {
+      opts.optimizationLevel = 2;
+    } else if (arg == "-O3") {
+      opts.optimizationLevel = 3;
+    } else if (arg.rfind("-I", 0) == 0) {
+      if (arg.size() > 2) opts.includeDirs.push_back(arg.substr(2));
+      else if (i + 1 < args.size()) opts.includeDirs.push_back(args[++i]);
+      else missingValue = true;
+    } else if (arg.rfind("-D", 0) == 0) {
+      if (arg.size() > 2) opts.featureToggles.push_back(arg.substr(2));
+      else if (i + 1 < args.size()) opts.featureToggles.push_back(args[++i]);
+      else missingValue = true;
+    } else if (std::string feat; nextVal("--feature", feat)) {
+      opts.featureToggles.push_back(feat);
+    } else if (std::string feats; nextVal("--features", feats)) {
+      std::stringstream ss(feats);
+      std::string item;
+      while (std::getline(ss, item, ',')) {
+        if (!item.empty()) opts.featureToggles.push_back(item);
+      }
+    } else if (std::string noFeat; nextVal("--no-feature", noFeat)) {
+      opts.disabledFeatures.push_back(noFeat);
+    } else if (!arg.empty() && arg[0] == '-') {
+      err << "stride: error: unknown option '" << arg << "' for 'stride "
+          << command << "'\n";
+      return 1;
+    } else if (!opts.inputFile.empty()) {
+      err << "stride: error: 'stride " << command
+          << "' takes one .stride file, got '" << opts.inputFile << "' and '"
+          << arg << "'\n";
+      return 1;
+    } else {
+      opts.inputFile = arg;
+    }
+    if (missingValue) {
+      err << "stride: error: '" << arg << "' requires a value\n";
+      return 1;
+    }
+  }
+  if (opts.inputFile.empty()) {
+    err << "stride: error: no input file specified\n";
+    return 1;
+  }
+  return buildBoardFirmware(opts, out, err) ? 0 : 1;
+}
+
 } // namespace strd

@@ -3,7 +3,9 @@
 Stride provides two CLI executables:
 
 * **`stride`** — Unified toolchain manager and driver (`compile`, `build`, `flash`, `system`, `tool`, `doctor`, `setup`).
-* **`stridec`** — Clang-style Ahead-Of-Time (AOT) compiler driver for object files, static archives, C headers, pre-built Arduino libraries, and board firmware.
+* **`stridec`** — Clang-style Ahead-Of-Time (AOT) compiler driver for object files, static archives, C headers, and pre-built Arduino libraries.
+
+Board firmware has one path: `stride build` builds it and `stride flash` builds and uploads it. `stridec` does not link or upload firmware.
 
 ---
 
@@ -27,7 +29,7 @@ stride <file.stride> [compiler options...]   # Shorthand for `stride compile`
 | :--- | :--- |
 | `stride compile [options] <files...>` | Run the AOT compiler driver (`stridec`) on `.stride` inputs. |
 | `stride build [options] <file.stride>` | Compile `.stride`, generate `stride_board.h`, compile/link the target runtime, and produce `.elf` and `.hex` firmware images. |
-| `stride flash [options] <file.stride>` | Same as `stride build --upload` (alias: `stride upload`). |
+| `stride flash [options] <file.stride>` | Same as `stride build`, then uploads the `.hex` to a connected board. |
 | `stride system list` | List available systems and versions in `STRIDEROOT/systems`. |
 | `stride system upgrade [dir] [ver]` | Update `use <System> version X.Y` declarations in `.stride` files under `dir` (default: current directory, version `1.0`). |
 | `stride tool list` | List discovered tool templates from `STRIDEROOT/tools`. |
@@ -35,9 +37,11 @@ stride <file.stride> [compiler options...]   # Shorthand for `stride compile`
 | `stride doctor` | Verify `STRIDEROOT`, `PATH`, host C++ compiler (`clang`/`cl`/`gcc`), and VS Code CLI. |
 | `stride setup vscode` | Install or update the bundled Stride VS Code extension (or install from marketplace). |
 
-### `stride build` / `stride flash` / `stride upload` Options
+### `stride build` / `stride flash` Options
 
-These commands inspect the `.stride` file's `use <System> version <ver> on <Board>` declaration (or `--boardOverride`), resolve the hardware chain (`HardwareResolver`: board → device → core), generate `stride_board.h`, compile the target C runtime (e.g. `stride_avr_runtime.c`), link with `avr-gcc`, emit `.elf` + `.hex` via `avr-objcopy`, print `avr-size`, and optionally flash via `avrdude`.
+These commands inspect the `.stride` file's `use <System> version <ver> on <Board>` declaration (or `--boardOverride`), resolve the hardware chain (`HardwareResolver`: board → device → core), generate `stride_board.h`, compile the target C runtime (e.g. `stride_avr_runtime.c`), link with `avr-gcc`, emit `.elf` + `.hex` via `avr-objcopy`, and print `avr-size`. `stride flash` then uploads the `.hex` via `avrdude`.
+
+Each takes exactly one `.stride` file. Any option not listed below is an error.
 
 The board is looked up next to the program first, so a project can keep its wiring in its own hardware file (`BlinkRig.stride` declaring `hardwareBoard BlinkRig { overlays: ArduinoUno }` and its `gpioPin`s) and build with `use AVR version 1.0 on BlinkRig`. See [Pins and GPIO](language/systems_and_platforms.md#6-pins-and-gpio).
 
@@ -45,8 +49,8 @@ The board is looked up next to the program first, so a project can keep its wiri
 | :--- | :--- |
 | `-o <file.hex\|file.elf>` | Output firmware path (default: `<input>.hex`). Both `.elf` and `.hex` are produced alongside one another. |
 | `--boardOverride=<name>`, `--boardOverride <name>` | Override the board declared in `use <System> on <Board>` (or supply a board when none is specified in the file). |
-| `--port=<port>`, `--port <port>`, `-P <port>` | Serial port for upload (e.g. `COM3`, `/dev/ttyACM0`). Auto-detected from the board's `usb` VID:PID list if omitted. |
-| `--upload`, `--flash` | Upload the built `.hex` image to the board (enabled by default for `stride flash` / `stride upload`). |
+| `--port=<port>`, `--port <port>`, `-P <port>` | `stride flash` only. Serial port for upload (e.g. `COM3`, `/dev/ttyACM0`). Auto-detected from the board's `usb` VID:PID list if omitted. |
+| `--strict` | Make a String write that can be cut off an error. |
 | `--build-dir=<dir>`, `--build-dir <dir>` | Directory for intermediate artifacts (`<stem>.o`, `stride_board.h`, runtime `.o`). Defaults to `<outDir>/<stem>_build`. |
 | `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, `-Oz` | Optimization level passed to LLVM (`-Os` / `-Oz` map to level `2`; default: `2`). |
 | `-I <dir>`, `-I<dir>` | Add directory to `.stride` include search path. |
@@ -81,8 +85,8 @@ Any `--flag=<val>` option that takes a value also accepts `--flag <val>`.
 
 | Option | Description |
 | :--- | :--- |
-| `-c` | Compile to an object file / archive only (do not run firmware linking or upload even if `--upload` / `.hex` / `.elf` would apply). |
-| `-o <file>` | Output object file (`.o` / `.obj`), static archive (`.a`), or board firmware (`.elf` / `.hex`, unless `-c` is set). |
+| `-c` | Compile to an object file. This is the default; the flag is accepted for Clang compatibility, and with it an `-o <file>.elf` name is treated as an object file. |
+| `-o <file>` | Output object file (`.o` / `.obj`) or static archive (`.a`). A `.hex` (or, without `-c`, `.elf`) output is an error that points to `stride build`. |
 | `--emit-header=<file>`, `-emit-header=<file>`, `--header-out=<file>`, `-header-out=<file>` | Generate a C99/C++ interface header (`.h`) declaring domain functions and structs. |
 | `--domain=<name>`, `-domain <name>` | Restrict generated C header declarations to a specific domain. |
 | `--emit-domain-state` | Emit zero-initialized `__stride_<Domain>_state` global byte arrays into object output for bare-metal runtimes. |
@@ -100,12 +104,7 @@ Any `--flag=<val>` option that takes a value also accepts `--flag <val>`.
 | `-funroll-loops`, `-fno-unroll-loops` | Enable or disable loop unrolling flags. |
 | `-Wconversion`, `--report-conversions` | Emit compiler warnings (`file:line:col: warning: ... [-Wconversion]`) for potentially lossy numeric conversions. |
 
-### Firmware Upload Options (`stridec` without `-c`)
-
-| Option | Description |
-| :--- | :--- |
-| `--upload`, `--flash` | Build and upload firmware to the target board. |
-| `--port=<port>`, `-P <port>` | Serial port for upload (auto-detected via USB VID:PID if omitted). |
+`stridec` rejects `--flash`, `--upload`, `--port` and `-P` with an error that points to `stride flash`.
 
 ### Arduino Pre-built Library Options
 

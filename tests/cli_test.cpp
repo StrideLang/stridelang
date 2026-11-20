@@ -104,6 +104,75 @@ TEST_F(StridecDriverTest, UnknownOptionReturnsError) {
   EXPECT_NE(err.str().find("unknown command-line option"), std::string::npos);
 }
 
+// Firmware is built only by 'stride build' and uploaded only by 'stride flash';
+// stridec points there instead.
+TEST_F(StridecDriverTest, FirmwareOptionsPointToStrideFlash) {
+  std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
+  for (const std::vector<std::string> &args :
+       std::vector<std::vector<std::string>>{
+           {inputFile, "--flash"},
+           {inputFile, "--upload"},
+           {inputFile, "-o", "out.o", "--port=COM3"},
+           {inputFile, "-o", "out.o", "-P", "COM3"}}) {
+    out.str("");
+    err.str("");
+    EXPECT_EQ(strd::runStridec(args, out, err), 1) << args.back();
+    EXPECT_NE(err.str().find("use 'stride flash"), std::string::npos)
+        << err.str();
+  }
+}
+
+TEST_F(StridecDriverTest, FirmwareOutputPointsToStrideBuild) {
+  std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
+  for (const std::string &output : {"blinky.hex", "blinky.elf"}) {
+    out.str("");
+    err.str("");
+    EXPECT_EQ(strd::runStridec({inputFile, "-o", output}, out, err), 1);
+    EXPECT_NE(err.str().find("use 'stride build"), std::string::npos)
+        << err.str();
+  }
+  out.str("");
+  err.str("");
+  EXPECT_EQ(strd::runStridec({"-c", inputFile, "-o", "blinky.hex"}, out, err), 1);
+  EXPECT_NE(err.str().find("use 'stride build"), std::string::npos);
+}
+
+TEST_F(StridecDriverTest, BoardBuildHelpListsPortOnlyForFlash) {
+  EXPECT_EQ(strd::runBoardBuild({"--help"}, "", true, out, err), 0);
+  EXPECT_NE(out.str().find("stride flash"), std::string::npos);
+  EXPECT_NE(out.str().find("--port"), std::string::npos);
+  EXPECT_NE(out.str().find("--strict"), std::string::npos);
+  out.str("");
+  EXPECT_EQ(strd::runBoardBuild({"--help"}, "", false, out, err), 0);
+  EXPECT_NE(out.str().find("stride build"), std::string::npos);
+  EXPECT_EQ(out.str().find("--port"), std::string::npos);
+}
+
+TEST_F(StridecDriverTest, BoardBuildRejectsUploadFlagsAndPortOnBuild) {
+  EXPECT_EQ(strd::runBoardBuild({"x.stride", "--upload"}, "", false, out, err), 1);
+  EXPECT_NE(err.str().find("use 'stride flash'"), std::string::npos);
+  err.str("");
+  EXPECT_EQ(strd::runBoardBuild({"x.stride", "--flash"}, "", true, out, err), 1);
+  EXPECT_NE(err.str().find("use 'stride flash'"), std::string::npos);
+  err.str("");
+  EXPECT_EQ(strd::runBoardBuild({"x.stride", "--port=COM3"}, "", false, out, err), 1);
+  EXPECT_NE(err.str().find("use 'stride flash'"), std::string::npos);
+}
+
+TEST_F(StridecDriverTest, BoardBuildRejectsBadArguments) {
+  EXPECT_EQ(strd::runBoardBuild({"a.stride", "b.stride"}, "", false, out, err), 1);
+  EXPECT_NE(err.str().find("takes one .stride file"), std::string::npos);
+  err.str("");
+  EXPECT_EQ(strd::runBoardBuild({"a.stride", "-g"}, "", false, out, err), 1);
+  EXPECT_NE(err.str().find("unknown option '-g'"), std::string::npos);
+  err.str("");
+  EXPECT_EQ(strd::runBoardBuild({"a.stride", "-o"}, "", false, out, err), 1);
+  EXPECT_NE(err.str().find("requires a value"), std::string::npos);
+  err.str("");
+  EXPECT_EQ(strd::runBoardBuild({"-v"}, "", true, out, err), 1);
+  EXPECT_NE(err.str().find("no input file"), std::string::npos);
+}
+
 TEST_F(StridecDriverTest, EmptyArgumentsAreIgnored) {
   std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
   std::error_code ec;

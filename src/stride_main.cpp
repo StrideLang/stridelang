@@ -33,7 +33,7 @@ void printUsage(const std::string &prog) {
       << "Commands:\n"
       << "  compile [options] <files...>  Ahead-Of-Time compile Stride sources to object/header/archive\n"
       << "  build [options] <file.stride> Compile, link, and package board firmware (.hex / .elf)\n"
-      << "  flash [options] <file.stride> Build and upload firmware to a connected board (alias: upload)\n"
+      << "  flash [options] <file.stride> Build firmware and upload it to a connected board\n"
       << "  system list                   List systems and platforms available in STRIDEROOT\n"
       << "  system upgrade [dir] [ver]    Upgrade 'use <System> version' in files within a folder\n"
       << "  tool list                     List local hardware and tool templates\n"
@@ -43,7 +43,8 @@ void printUsage(const std::string &prog) {
       << "Options:\n"
       << "  -h, --help                    Show this help message\n"
       << "  -v, --version                 Display version and active STRIDEROOT\n\n"
-      << "Run '" << prog << " compile --help' or '" << prog << " build --help' for command-specific options.\n";
+      << "Run '" << prog << " compile --help', '" << prog << " build --help' or '" << prog
+      << " flash --help' for command-specific options.\n";
 }
 
 int handleSystemCommand(const std::vector<std::string> &args, const std::string &strideRoot) {
@@ -223,94 +224,6 @@ int handleDoctorCommand(const std::string &strideRoot) {
   return 0;
 }
 
-int handleBoardBuildCommand(const std::vector<std::string> &args,
-                            const std::string &strideRoot,
-                            bool defaultUpload) {
-  strd::BoardBuildOptions opts;
-  opts.strideRoot = strideRoot;
-  opts.upload = defaultUpload;
-  for (size_t i = 0; i < args.size(); ++i) {
-    const std::string &arg = args[i];
-    auto nextVal = [&](const std::string &flag, std::string &out) -> bool {
-      if (arg == flag && i + 1 < args.size()) {
-        out = args[++i];
-        return true;
-      }
-      if (arg.rfind(flag + "=", 0) == 0) {
-        out = arg.substr(flag.size() + 1);
-        return true;
-      }
-      return false;
-    };
-    if (arg == "-h" || arg == "--help") {
-      std::cout << "Usage: stride " << (defaultUpload ? "flash" : "build")
-                << " [options] <file.stride>\n\n"
-                << "Options:\n"
-                << "  -o <file.hex|file.elf>   Output firmware file (default: <input>.hex)\n"
-                << "  --boardOverride=<name>   Override target board from 'use <System> on <Board>'\n"
-                << "  --port=<port>, -P <port> Serial port for upload (auto-detected if omitted)\n"
-                << "  --upload, --flash        Upload firmware after building\n"
-                << "  --build-dir=<dir>        Directory for intermediate artifacts\n"
-                << "  -O0, -O1, -O2, -O3, -Os, -Oz\n"
-                << "                           Optimization level (default: 2)\n"
-                << "  -I <dir>                 Add include search path\n"
-                << "  -D <name>, --feature=<name>, --features=<list>\n"
-                << "                           Enable feature(s) or variant(s)\n"
-                << "  --no-feature=<name>      Disable feature or variant\n"
-                << "  --no-default-features    Disable declared default features\n"
-                << "  --strideroot=<dir>       Custom STRIDEROOT directory\n"
-                << "  -v, --verbose            Verbose build and upload output\n"
-                << "  -h, --help               Show this help message\n";
-      return 0;
-    } else if (nextVal("-o", opts.outputFile)) {
-    } else if (nextVal("--boardOverride", opts.boardOverride)) {
-    } else if (nextVal("--port", opts.serialPort) || nextVal("-P", opts.serialPort)) {
-    } else if (nextVal("--build-dir", opts.buildDir)) {
-    } else if (nextVal("--strideroot", opts.strideRoot)) {
-    } else if (arg == "--upload" || arg == "--flash") {
-      opts.upload = true;
-    } else if (arg == "--no-default-features") {
-      opts.noDefaultFeatures = true;
-    } else if (arg == "-v" || arg == "--verbose") {
-      opts.verbose = true;
-    } else if (arg == "-O0") {
-      opts.optimizationLevel = 0;
-    } else if (arg == "-O1") {
-      opts.optimizationLevel = 1;
-    } else if (arg == "-O2" || arg == "-Os" || arg == "-Oz") {
-      opts.optimizationLevel = 2;
-    } else if (arg == "-O3") {
-      opts.optimizationLevel = 3;
-    } else if (arg.rfind("-I", 0) == 0) {
-      if (arg.size() > 2) opts.includeDirs.push_back(arg.substr(2));
-      else if (i + 1 < args.size()) opts.includeDirs.push_back(args[++i]);
-    } else if (arg.rfind("-D", 0) == 0) {
-      if (arg.size() > 2) opts.featureToggles.push_back(arg.substr(2));
-      else if (i + 1 < args.size()) opts.featureToggles.push_back(args[++i]);
-    } else if (std::string feat; nextVal("--feature", feat)) {
-      opts.featureToggles.push_back(feat);
-    } else if (std::string feats; nextVal("--features", feats)) {
-      std::stringstream ss(feats);
-      std::string item;
-      while (std::getline(ss, item, ',')) {
-        if (!item.empty()) opts.featureToggles.push_back(item);
-      }
-    } else if (std::string noFeat; nextVal("--no-feature", noFeat)) {
-      opts.disabledFeatures.push_back(noFeat);
-    } else if (!arg.empty() && arg[0] == '-') {
-      std::cerr << "stride: error: unknown option '" << arg << "'\n";
-      return 1;
-    } else {
-      opts.inputFile = arg;
-    }
-  }
-  if (opts.inputFile.empty()) {
-    std::cerr << "stride: error: no input file specified\n";
-    return 1;
-  }
-  return strd::buildBoardFirmware(opts, std::cout, std::cerr) ? 0 : 1;
-}
-
 int handleSetupVscode(const std::string &strideRoot) {
   std::cout << "Setting up Stride VS Code Extension...\n";
 
@@ -380,13 +293,12 @@ int main(int argc, char *argv[]) {
   }
 
   // Subcommand dispatch
-  if (firstArg == "build" || firstArg == "flash" || firstArg == "upload") {
+  if (firstArg == "build" || firstArg == "flash") {
     std::vector<std::string> buildArgs;
     for (int i = 2; i < argc; ++i) {
       buildArgs.push_back(argv[i]);
     }
-    return handleBoardBuildCommand(buildArgs, strideRoot,
-                                   firstArg == "flash" || firstArg == "upload");
+    return strd::runBoardBuild(buildArgs, strideRoot, firstArg == "flash");
   }
 
   if (firstArg == "compile") {

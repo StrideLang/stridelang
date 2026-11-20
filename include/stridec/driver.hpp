@@ -40,10 +40,8 @@ struct StridecOptions {
   std::string domainName;
   std::string strideRoot;
   std::string boardName;
-  std::string serialPort;
   bool compileOnly = false;
   bool emitDomainState = false;
-  bool uploadFirmware = false;
   std::vector<std::string> includeDirs;
   std::vector<std::string> featureToggles;
   std::vector<std::string> disabledFeatures;
