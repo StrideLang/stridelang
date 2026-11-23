@@ -8,6 +8,7 @@
 #include "stridec/driver.hpp"
 #include "stridec/board_builder.hpp"
 #include "stride/stridegen/hardwareresolver.hpp"
+#include "stride/stridejit/strideenvironment.hpp"
 #include "stride/utils/astfunctions.h"
 
 namespace {
@@ -684,6 +685,145 @@ TEST_F(StridecDriverTest, ArduinoUnoBoardHeaderAndFirmwareBuild) {
   EXPECT_TRUE(std::filesystem::exists(hexOut));
   EXPECT_GT(std::filesystem::file_size(hexOut), 0u);
   EXPECT_TRUE(std::filesystem::exists(tempDir / "blinky.elf"));
+
+  std::filesystem::remove_all(tempDir, ec);
+}
+
+TEST_F(StridecDriverTest, ArduinoUnoIsrBoardHeaderAndFirmwareBuild) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  strd::HardwareResolver resolver(strideRoot);
+  std::string errMsg;
+  auto uno = resolver.resolve("AVR", "ArduinoUno", &errMsg);
+  ASSERT_TRUE(uno.has_value()) << errMsg;
+
+  std::error_code ec;
+  std::filesystem::path tempDir =
+      std::filesystem::temp_directory_path(ec) / "stride_uno_isr_test";
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
+
+  std::filesystem::path rigFile = tempDir / "IsrRig.stride";
+  {
+    std::ofstream f(rigFile);
+    f << "package IsrRig\n"
+      << "import Gpio\n"
+      << "import ArduinoUno\n"
+      << "hardwareBoard IsrRig { overlays: ArduinoUno }\n"
+      << "gpioPin Button { pin: ArduinoUno::D2 mode: Gpio::PinInput pull: Gpio::PullUp interrupt: Gpio::InterruptFalling }\n"
+      << "gpioPin FastOutPin { pin: ArduinoUno::D8 mode: Gpio::PinOutput initial: off }\n";
+  }
+
+  std::filesystem::path progFile = tempDir / "isr_prog.stride";
+  {
+    std::ofstream f(progFile);
+    f << "use AVR version 1.0 on IsrRig\n"
+      << "import DigitalIO\n"
+      << "import IsrRig\n"
+      << "_domainDefinition PinEdgeIsrDomain {\n"
+      << "    framework: _AvrFramework\n"
+      << "    parentDomain: RootDomain\n"
+      << "    requiresResources: [_RootContext, _AvrProcessor, _AvrFlashMemory, _AvrSram, _AvrGpio]\n"
+      << "    execution: ExecutionInterrupt\n"
+      << "    trigger: IsrRig::Button\n"
+      << "    rate: none\n"
+      << "}\n"
+      << "switch EdgeState { domain: PinEdgeIsrDomain default: off }\n"
+      << "EdgeState >> Not() >> EdgeState;\n"
+      << "EdgeState >> DigitalIO::DigitalOut(pin: IsrRig::FastOutPin);\n"
+      << "signal TimerTicks { type: Int16 domain: AvrTimer1IsrDomain default: 0 }\n"
+      << "TimerTicks + 1 >> TimerTicks;\n";
+  }
+
+  strd::StrideEnvironment env(strideRoot);
+  env.setTarget("avr", "atmega328p", "");
+  ASSERT_TRUE(env.generateIr(progFile.string(), false));
+
+  std::string header =
+      strd::generateBoardHeader(*uno, errMsg, env.mStrideEnv.m_tree);
+  ASSERT_FALSE(header.empty()) << errMsg;
+  EXPECT_NE(header.find("#define STRIDE_ISR_TIMER1_COMPA_VECT AvrTimer1IsrDomain"),
+            std::string::npos)
+      << header;
+  EXPECT_NE(header.find("#define STRIDE_ISR_INT0_VECT PinEdgeIsrDomain"),
+            std::string::npos)
+      << header;
+  EXPECT_NE(header.find("ISR(TIMER1_COMPA_vect)"), std::string::npos) << header;
+  EXPECT_NE(header.find("ISR(INT0_vect)"), std::string::npos) << header;
+
+  const std::string avrGcc = strd::findAvrTool("avr-gcc", strideRoot);
+  const std::string avrObjcopy = strd::findAvrTool("avr-objcopy", strideRoot);
+  if (!avrGcc.empty() && !avrObjcopy.empty()) {
+    std::filesystem::path hexOut = tempDir / "isr_prog.hex";
+    strd::BoardBuildOptions bopts;
+    bopts.inputFile = progFile.string();
+    bopts.outputFile = hexOut.string();
+    bopts.buildDir = (tempDir / "build").string();
+    bopts.strideRoot = strideRoot;
+    EXPECT_TRUE(strd::buildBoardFirmware(bopts, out, err)) << err.str();
+    EXPECT_TRUE(std::filesystem::exists(hexOut));
+  }
+
+  std::filesystem::remove_all(tempDir, ec);
+}
+
+TEST_F(StridecDriverTest, DevicesCommandJsonListsHostDesktop) {
+  EXPECT_EQ(strd::runDevicesCommand({"--json"}, out, err), 0) << err.str();
+  EXPECT_NE(out.str().find("\"kind\": \"desktop\""), std::string::npos);
+  EXPECT_NE(out.str().find("\"id\": \"localhost\""), std::string::npos);
+}
+
+TEST_F(StridecDriverTest, DebugConfigCommandDesktopAndEmbeddedJson) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  std::string desktopFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
+  EXPECT_EQ(strd::runDebugConfigCommand({"--json", desktopFile}, strideRoot, out, err), 0)
+      << err.str();
+  EXPECT_NE(out.str().find("\"kind\": \"desktop\""), std::string::npos);
+  EXPECT_NE(out.str().find("\"type\": \"stdio\""), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::path tempDir =
+      std::filesystem::temp_directory_path(ec) / "stride_dbg_cfg_test";
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
+  std::filesystem::path unoFile = tempDir / "uno_prog.stride";
+  {
+    std::ofstream f(unoFile);
+    f << "use AVR version 1.0 on ArduinoUno\n"
+      << "signal X { type: Real domain: AvrTickDomain }\n";
+  }
+  out.str("");
+  err.str("");
+  EXPECT_EQ(strd::runDebugConfigCommand({"--json", unoFile.string()}, strideRoot, out, err), 0)
+      << err.str();
+  EXPECT_NE(out.str().find("\"kind\": \"embedded\""), std::string::npos);
+  EXPECT_NE(out.str().find("\"board\": \"ArduinoUno\""), std::string::npos);
+  EXPECT_NE(out.str().find("\"runner\": \"avrdude\""), std::string::npos);
+  EXPECT_NE(out.str().find("\"type\": \"serial\""), std::string::npos);
+  std::filesystem::remove_all(tempDir, ec);
+}
+
+TEST_F(StridecDriverTest, UnifiedBuildAndRunDesktopTarget) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  std::string inputFile = STRIDELANG_TESTS_SOURCE_DIR "sensor_dsp.stride";
+
+  std::error_code ec;
+  std::filesystem::path tempDir =
+      std::filesystem::temp_directory_path(ec) / "stride_unified_desktop_test";
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
+
+  std::filesystem::path objOut = tempDir / "sensor_dsp.o";
+  EXPECT_EQ(strd::runUnifiedCommand({inputFile, "-o", objOut.string()}, strideRoot, "build", out, err), 0)
+      << err.str();
+  EXPECT_TRUE(std::filesystem::exists(objOut));
+  EXPECT_TRUE(std::filesystem::exists(tempDir / "sensor_dsp.h"));
+  EXPECT_TRUE(std::filesystem::exists(tempDir / "sensor_dsp.target.json"));
+
+  out.str("");
+  err.str("");
+  EXPECT_EQ(strd::runUnifiedCommand({inputFile, "-o", objOut.string()}, strideRoot, "run", out, err), 0)
+      << err.str();
+  EXPECT_NE(out.str().find("Running desktop JIT target"), std::string::npos);
 
   std::filesystem::remove_all(tempDir, ec);
 }

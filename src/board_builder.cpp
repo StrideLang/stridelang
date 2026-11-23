@@ -285,7 +285,8 @@ bool inspectProgramBoard(const std::string &inputFile,
 }
 
 std::string generateBoardHeader(const ResolvedHardware &hw,
-                                std::string &errorMsg) {
+                                std::string &errorMsg,
+                                const ASTNode &resolvedTree) {
   auto pinsNode = hw.property("pins");
   if (!pinsNode || pinsNode->getNodeType() != AST::List) {
     errorMsg = "hardware '" + hw.name() + "' has no pins list";
@@ -420,6 +421,127 @@ std::string generateBoardHeader(const ResolvedHardware &hw,
                  [](const PinEntry &e) { return e.input; });
   emitArrayMacro("STRIDE_PIN_BITS", [](const PinEntry &e) { return e.bit; });
   ss << "#define STRIDE_SERIAL_BAUD " << baud << "UL\n";
+
+  if (resolvedTree) {
+    auto stripQ = [](std::string n) {
+      size_t pos = n.rfind("::");
+      return pos != std::string::npos ? n.substr(pos + 2) : n;
+    };
+    std::map<std::string, std::shared_ptr<DeclarationNode>> resources;
+    std::map<std::string, std::shared_ptr<DeclarationNode>> gpioPins;
+    std::vector<std::shared_ptr<DeclarationNode>> isrDomains;
+    for (const auto &node : resolvedTree->getChildren()) {
+      if (node->getNodeType() != AST::Declaration) {
+        continue;
+      }
+      auto decl = std::static_pointer_cast<DeclarationNode>(node);
+      const std::string &et = decl->getEntityType();
+      if (et == "resource" || et == "domainResource") {
+        resources[decl->getName()] = decl;
+      } else if (et == "gpioPin") {
+        gpioPins[decl->getName()] = decl;
+      } else if (et == "_domainDefinition" || et == "gameDefinition") {
+        auto execProp = decl->getPropertyValue("execution");
+        if (execProp &&
+            (stripQ(ASTQuery::getNodeName(execProp)) == "ExecutionInterrupt" || (execProp->getCompilerProperty("resolvedFrom") && stripQ(ASTQuery::getNodeName(execProp->getCompilerProperty("resolvedFrom"))) == "ExecutionInterrupt") || (execProp->getNodeType() == AST::Int && std::static_pointer_cast<ValueNode>(execProp)->getIntValue() == 1))) {
+          isrDomains.push_back(decl);
+        }
+      }
+    }
+
+    std::string isrDeclsMacro;
+    std::string isrInitMacro;
+    for (const auto &domDecl : isrDomains) {
+      std::string domName = domDecl->getName();
+      std::string isrVec;
+      if (auto reqProp = domDecl->getPropertyValue("requiresResources")) {
+        if (reqProp->getNodeType() == AST::List) {
+          for (const auto &item : reqProp->getChildren()) {
+            std::string rName = stripQ(ASTQuery::getNodeName(item));
+            auto rIt = resources.find(rName);
+            if (rIt != resources.end() && rIt->second) {
+              auto vecProp = rIt->second->getPropertyValue("isrVector");
+              if (vecProp && vecProp->getNodeType() == AST::String) {
+                isrVec = std::static_pointer_cast<ValueNode>(vecProp)
+                             ->getStringValue();
+                if (!isrVec.empty()) {
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      if (isrVec.empty()) {
+        if (auto trigProp = domDecl->getPropertyValue("trigger")) {
+          std::string trigName = stripQ(ASTQuery::getNodeName(trigProp));
+          auto pIt = gpioPins.find(trigName);
+          if (pIt != gpioPins.end() && pIt->second) {
+            if (auto vp = pIt->second->getCompilerProperty("isrVector")) {
+              if (vp->getNodeType() == AST::String) {
+                isrVec =
+                    std::static_pointer_cast<ValueNode>(vp)->getStringValue();
+              }
+            }
+            if (isrVec.empty()) {
+              auto cfg = GpioPinConfig::fromDeclaration(pIt->second);
+              auto bp = hw.boardPin(cfg.label);
+              if (bp && bp->interruptSource) {
+                isrVec = bp->interruptSource->vector;
+              }
+            }
+          }
+        }
+      }
+      if (isrVec.empty()) {
+        continue;
+      }
+
+      std::string vecMacro = toUpper(isrVec);
+      ss << "#define STRIDE_ISR_" << vecMacro << " " << domName << "\n";
+
+      isrDeclsMacro +=
+          "int32_t " + domName + "_init(void *state) __attribute__((weak)); \\\n";
+      isrDeclsMacro +=
+          "int32_t " + domName + "_process(void *state) __attribute__((weak)); \\\n";
+      isrDeclsMacro +=
+          "extern uint8_t __stride_" + domName + "_state[] __attribute__((weak)); \\\n";
+      isrDeclsMacro += "ISR(" + isrVec + ") { \\\n"
+                       "  if (" + domName + "_process) { \\\n"
+                       "    " + domName + "_process(__stride_" + domName + "_state); \\\n"
+                       "  } \\\n"
+                       "} \\\n";
+
+      isrInitMacro += "if (" + domName + "_init) { \\\n"
+                      "  " + domName + "_init(__stride_" + domName + "_state); \\\n"
+                      "} \\\n";
+      if (isrVec == "TIMER1_COMPA_vect") {
+        int64_t rateHz = 8000;
+        if (auto rateProp = domDecl->getPropertyValue("rate")) {
+          if (rateProp->getNodeType() == AST::Int ||
+              rateProp->getNodeType() == AST::Real) {
+            rateHz = static_cast<int64_t>(
+                std::static_pointer_cast<ValueNode>(rateProp)->toReal());
+          }
+        }
+        if (rateHz <= 0) {
+          rateHz = 1000;
+        }
+        isrInitMacro +=
+            "TCCR1A = 0; \\\n"
+            "TCCR1B = (1 << WGM12) | (1 << CS11); \\\n"
+            "OCR1A = (uint16_t)(F_CPU / 8UL / " +
+            std::to_string(rateHz) + "UL - 1UL); \\\n"
+            "TIMSK1 = (1 << OCIE1A); \\\n";
+      }
+    }
+    if (!isrDeclsMacro.empty()) {
+      ss << "#define STRIDE_ISR_DECLARATIONS \\\n" << isrDeclsMacro << "\n";
+    }
+    if (!isrInitMacro.empty()) {
+      ss << "#define STRIDE_ISR_INIT \\\n" << isrInitMacro << "\n";
+    }
+  }
 
   return ss.str();
 }
@@ -714,6 +836,7 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
         << triple << ", " << cpu << " @ " << clockHz << " Hz)\n";
   }
 
+  ASTNode compiledTree;
   {
     StrideEnvironment env(strideRoot);
     for (const auto &inc : opts.includeDirs) {
@@ -744,6 +867,7 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
       err << "stride: error: Stride IR compilation failed\n";
       return false;
     }
+    compiledTree = env.mStrideEnv.m_tree;
     env.emitDomainStateBuffers();
     // Where each variable lives in the firmware's memory: domain state
     // blocks (__stride_<Domain>_state) and globals, by ELF symbol. A host
@@ -772,7 +896,7 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
 
   // 3. Generate stride_board.h and compile C runtime.
   std::string boardErr;
-  std::string boardHeader = generateBoardHeader(*hw, boardErr);
+  std::string boardHeader = generateBoardHeader(*hw, boardErr, compiledTree);
   if (boardHeader.empty()) {
     err << "stride: error: " << boardErr << "\n";
     return false;
@@ -877,55 +1001,30 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
                   opts.verbose, out);
   }
 
-  // 5. Optional upload via avrdude.
-  if (opts.upload) {
-    const std::string avrdude = findAvrTool("avrdude", strideRoot);
-    if (avrdude.empty()) {
-      err << "stride: error: avrdude not found in PATH or Arduino15 tools\n";
-      return false;
-    }
-
-    std::string port = opts.serialPort;
-    if (port.empty()) {
-      std::string portErr;
-      port = detectBoardSerialPort(*hw, portErr);
-      if (port.empty()) {
-        err << "stride: error: " << portErr << "\n";
-        return false;
+  // Write normalized target manifest alongside the built firmware.
+  {
+    TargetDescriptor desc;
+    std::string descErr;
+    if (inspectTargetDescriptor(opts, desc, descErr)) {
+      desc.artifact = elfPath.generic_string();
+      desc.hex = hexPath.generic_string();
+      std::filesystem::path manifestPath = hexPath;
+      manifestPath.replace_extension(".target.json");
+      std::ofstream mf(manifestPath, std::ios::binary);
+      if (mf) {
+        mf << targetDescriptorToJson(desc);
+        if (opts.verbose) {
+          out << "Target manifest: " << manifestPath.string() << "\n";
+        }
       }
-      out << "Detected " << hw->name() << " on " << port << "\n";
     }
+  }
 
-    const std::string programmer =
-        hw->blockString("upload", "programmer", "arduino");
-    const int64_t baud = hw->blockInt("upload", "baud").value_or(115200);
-
-    std::vector<std::string> uploadArgs;
-    std::filesystem::path confPath =
-        std::filesystem::path(avrdude).parent_path().parent_path() / "etc" /
-        "avrdude.conf";
-    if (std::filesystem::exists(confPath)) {
-      uploadArgs.push_back("-C");
-      uploadArgs.push_back(confPath.string());
-    }
-    uploadArgs.push_back("-p");
-    uploadArgs.push_back(cpu);
-    uploadArgs.push_back("-c");
-    uploadArgs.push_back(programmer);
-    uploadArgs.push_back("-b");
-    uploadArgs.push_back(std::to_string(baud));
-    uploadArgs.push_back("-P");
-    uploadArgs.push_back(port);
-    uploadArgs.push_back("-D");
-    uploadArgs.push_back("-U");
-    uploadArgs.push_back("flash:w:" + hexPath.string() + ":i");
-
-    if (runSubprocess(avrdude, uploadArgs, opts.verbose, out) != 0) {
-      err << "stride: error: avrdude upload failed\n";
+  // 5. Optional upload via board's configured flash runner.
+  if (opts.upload) {
+    if (!uploadFirmwareWithRunner(*hw, cpu, opts, elfPath, hexPath, out, err)) {
       return false;
     }
-    out << "Uploaded " << hexPath.string() << " to " << hw->name() << " on "
-        << port << "\n";
   }
 
   return true;

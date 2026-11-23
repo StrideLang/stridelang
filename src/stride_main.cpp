@@ -32,8 +32,11 @@ void printUsage(const std::string &prog) {
       << "  " << prog << " <file.stride> [compiler options...] (direct compilation)\n\n"
       << "Commands:\n"
       << "  compile [options] <files...>  Ahead-Of-Time compile Stride sources to object/header/archive\n"
-      << "  build [options] <file.stride> Compile, link, and package board firmware (.hex / .elf)\n"
+      << "  build [options] <file.stride> Compile and package board firmware or desktop target\n"
       << "  flash [options] <file.stride> Build firmware and upload it to a connected board\n"
+      << "  run [options] <file.stride>   Build and run a desktop target or flash & monitor a board\n"
+      << "  devices [--json]              List connected serial devices and desktop target\n"
+      << "  debug-config [--json] <file>  Print deployment and debug configuration\n"
       << "  system list                   List systems and platforms available in STRIDEROOT\n"
       << "  system upgrade [dir] [ver]    Upgrade 'use <System> version' in files within a folder\n"
       << "  tool list                     List local hardware and tool templates\n"
@@ -297,12 +300,28 @@ int main(int argc, char *argv[]) {
   }
 
   // Subcommand dispatch
-  if (firstArg == "build" || firstArg == "flash") {
+  if (firstArg == "build" || firstArg == "flash" || firstArg == "run") {
     std::vector<std::string> buildArgs;
     for (int i = 2; i < argc; ++i) {
       buildArgs.push_back(argv[i]);
     }
-    return strd::runBoardBuild(buildArgs, strideRoot, firstArg == "flash");
+    return strd::runUnifiedCommand(buildArgs, strideRoot, firstArg);
+  }
+
+  if (firstArg == "devices") {
+    std::vector<std::string> devArgs;
+    for (int i = 2; i < argc; ++i) {
+      devArgs.push_back(argv[i]);
+    }
+    return strd::runDevicesCommand(devArgs);
+  }
+
+  if (firstArg == "debug-config") {
+    std::vector<std::string> dbgArgs;
+    for (int i = 2; i < argc; ++i) {
+      dbgArgs.push_back(argv[i]);
+    }
+    return strd::runDebugConfigCommand(dbgArgs, strideRoot);
   }
 
   if (firstArg == "compile") {

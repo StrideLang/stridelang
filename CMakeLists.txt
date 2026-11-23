@@ -57,6 +57,7 @@ endif()
 add_library(stridec_driver STATIC
     src/driver.cpp
     src/board_builder.cpp
+    src/target_runner.cpp
 )
 
 target_include_directories(stridec_driver PUBLIC
