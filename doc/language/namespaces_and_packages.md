@@ -69,45 +69,52 @@ src/
 ```
 
 ### 3.1 Resolution Semantics
-1. **`Name.stride` as Package Root**: Contains top-level exports, shared types, default module definitions, and package constants for the `Name` namespace.
-2. **`Name/` as Sub-Namespace**: Contains nested modules accessible via `Name::SubModule`.
-3. **Import Variations**:
-   - `import Filters`: Parses `Filters.stride` and registers `Filters/` for on-demand sub-module resolution.
-   - `import Filters::Biquad`: Resolves directly to `Filters/Biquad.stride`.
-   - `import Filters as Flt`: Aliases both the root file and child modules under `Flt::` (e.g., `Flt::Biquad`).
-4. **Symbol Collision**: If both `Filters.stride` and `Filters/Biquad.stride` declare a symbol named `Biquad`, the explicit file `Filters/Biquad.stride` takes precedence for `Filters::Biquad`.
+1. **`Name.stride` as Package Root**: Contains top-level exports or re-export imports (`import Filters::Biquad as Biquad`) for the `Name` package.
+2. **`Name/` as Sub-Namespace**: Contains nested modules, each declaring its own `package` matching its path (e.g., `package Filters::Biquad` in `Filters/Biquad.stride`).
+3. **Single Canonical Namespace**: Each declaration has **one** canonical namespace (`namespaceTree`). Qualified lookups match strictly against `namespaceTree` (after expanding file-local `import ... as Alias` entries), without falling back to the file's `_sourcePath`. A sub-module declaring `package Control::Foc` is exposed only under `Control::Foc::` (or a file-local alias), not under `Control::`.
+4. **Import Variations**:
+   - `import Filters`: Parses `Filters.stride` and loads `Filters/`.
+   - `import Filters::Biquad`: Resolves directly to `Filters/Biquad.stride`; callers qualify with `Filters::Biquad::...`.
+   - `import Filters::Biquad as Bq`: Maps `Bq` to `Filters::Biquad` in the importing file's `_imports` table; `Bq::...` canonicalizes to `Filters::Biquad::...`.
 
 ---
 
-## 4. Package Declarations & Derivation
+## 4. Package Declarations, Derivation & Root Qualification (`::`)
 
 ### 4.1 Explicit `package` Statement
-A file can declare its namespace explicitly at the top of the file:
+A file can declare its canonical namespace explicitly at the top of the file:
 
 ```stride
 package Audio::Filters
 ```
 
-This establishes the logical namespace for all declarations in the file, overriding directory-derived paths.
+This sets `namespaceTree` (`["Audio", "Filters"]`) on all top-level declarations in the file. For sub-modules, the `package` path should match the file's path under the library root (e.g., `Control/Foc.stride` $\to$ `package Control::Foc`).
 
 ### 4.2 Path-Based Derivation (Fallback)
-If no `package` statement is present, files located inside capitalized subdirectories derive their namespace from their relative folder path (e.g., `Audio/Filters/Biquad.stride` $\to$ `Audio::Filters::Biquad`).
+If no `package` statement is present:
+- **Nested imports** (`import Audio::Filters`, containing `::`): `StrideLibrary::loadImport` derives `namespaceTree` from the import path (`["Audio", "Filters"]`), keeping unpackaged sub-modules out of the root namespace.
+- **Top-level unpackaged imports** (`import GameSchema`, no `::`): declarations remain in the root namespace `{}`.
+- **Directory loading** (`ASTFunctions::loadAllInDirectory`): declarations without `namespaceTree` inherit their parent directory name.
+
+### 4.3 Root-Qualified Identifiers (`::` Prefix)
+Identifiers and calls may be prefixed with `::` to bypass local scope, enclosing `package` scope, and file-local `import ... as ...` aliases:
+
+```stride
+::Input >> ::Control::Foc::Park() >> ::Output;
+```
+
+- `::Name` resolves strictly in the root namespace `{}` (ignoring local module/reaction variables and enclosing package symbols).
+- `::Pkg::Name` resolves strictly against canonical `namespaceTree == ["Pkg"]` (ignoring any local `import ... as Pkg` alias).
 
 ---
 
-## 5. Package Security & Symbol Integrity
+## 5. Symbol Integrity & Collision Protection
 
-To prevent namespace poisoning and dependency injection attacks, Stride enforces strict compiler security invariants:
-
-1. **Sealed Packages**:
-   Packages cannot be reopened arbitrarily across unverified files. Application code or third-party packages cannot declare or inject symbols into system namespaces (`package Stride::*`, `package Pico::*`).
-2. **Authority Roots**:
-   System namespaces (`Stride`, `Buffer`, `Math`, `System`, `Platform`) are reserved authority roots loaded exclusively from verified `$STRIDEROOT` directories.
+1. **Package-Scoped Duplicate Detection**:
+   `CodeValidator::findDuplicateSymbols` compares canonical `namespaceTree` (and `framework`) rather than syntactic scope. Two different packages may declare the same symbol name (`PkgA::Filter` and `PkgB::Filter`), while duplicate declarations within the same package or root `{}` emit `LangError::DuplicateSymbol`.
+2. **Codegen Symbol Mangling**:
+   `NameMangler::mangle` includes the declaration's canonical `namespaceTree` scope when generating mangled LLVM IR symbols for polymorphic callables, preventing cross-package symbol collisions.
 3. **Immutable Symbol Tables**:
-   Once a declaration is registered in a package's symbol table, it cannot be redefined or monkey-patched. Subsequent redeclarations produce a `SymbolRedeclarationError`.
-4. **Final Declarations (`final`)**:
-   Entities marked `final` in their schema cannot be overridden or extended by external packages.
-5. **Lockfile Integrity (`stride.lock`)**:
-   The Stride package manager verifies cryptographic SHA-256 hashes of package source directories against `stride.lock` prior to compilation.
-6. **Encapsulation (`public: off`)**:
-   Symbols without explicit `public` visibility remain internal to their declaring package and cannot be targeted by external stream writes or dynamic member accesses.
+   Once a declaration is registered in a package's symbol table, it cannot be redefined within the same namespace.
+4. **Authority Roots & Sealed Packages (Planned)**:
+   System namespaces (`Stride`, `Buffer`, `Math`, `System`, `Platform`) are loaded from verified `$STRIDEROOT` directories; lockfile verification (`stride.lock`), `final` schema locks, and `public: off` visibility enforcement are planned extensions.
