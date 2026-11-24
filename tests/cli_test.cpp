@@ -517,36 +517,71 @@ TEST_F(StridecDriverTest, DebugAndOptimizationFlags) {
   EXPECT_FALSE(opts.unrollLoops);
 }
 
-// Every example project in strideroot/examples builds: an AVR example is
-// built into firmware (examples/AVR/<Project>/<Project>.stride), in a
+// Every example project in strideroot/examples builds into firmware in a
 // temporary directory so the examples folder stays clean.
 TEST_F(StridecDriverTest, ExamplesBuild) {
   std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
-  std::filesystem::path avrExamples =
-      std::filesystem::path(strideRoot) / "examples" / "AVR";
-  ASSERT_TRUE(std::filesystem::is_directory(avrExamples)) << avrExamples;
+  std::filesystem::path examplesDir =
+      std::filesystem::path(strideRoot) / "examples";
+  ASSERT_TRUE(std::filesystem::is_directory(examplesDir)) << examplesDir;
 
   const std::string avrGcc = strd::findAvrTool("avr-gcc", strideRoot);
   const std::string avrObjcopy = strd::findAvrTool("avr-objcopy", strideRoot);
-  if (avrGcc.empty() || avrObjcopy.empty()) {
-    GTEST_SKIP() << "avr-gcc / avr-objcopy not installed";
-  }
+  const bool hasAvr = !avrGcc.empty() && !avrObjcopy.empty();
 
-  int built = 0;
-  std::error_code ec;
-  for (const auto &entry : std::filesystem::directory_iterator(avrExamples)) {
+  auto hasPicoSdk = [&]() -> bool {
+    if (const char *env = std::getenv("PICO_SDK_PATH")) {
+      if (*env && std::filesystem::exists(env)) {
+        return true;
+      }
+    }
+    const char *home = std::getenv("USERPROFILE");
+    if (!home) {
+      home = std::getenv("HOME");
+    }
+    if (home && std::filesystem::exists(std::filesystem::path(home) / ".pico-sdk" / "sdk")) {
+      return true;
+    }
+    return false;
+  }();
+
+  std::vector<std::filesystem::path> projects;
+  for (const auto &entry : std::filesystem::directory_iterator(examplesDir)) {
     if (!entry.is_directory()) {
       continue;
     }
     const std::string name = entry.path().filename().string();
-    std::filesystem::path program = entry.path() / (name + ".stride");
-    ASSERT_TRUE(std::filesystem::exists(program))
-        << "example " << name << " has no " << name << ".stride";
-    EXPECT_TRUE(std::filesystem::exists(entry.path() / "README.md"))
+    if (name.empty() || name[0] == '.') {
+      continue;
+    }
+    if (std::filesystem::exists(entry.path() / (name + ".stride"))) {
+      projects.push_back(entry.path());
+    } else {
+      for (const auto &sub : std::filesystem::directory_iterator(entry.path())) {
+        if (!sub.is_directory()) {
+          continue;
+        }
+        const std::string subName = sub.path().filename().string();
+        if (std::filesystem::exists(sub.path() / (subName + ".stride"))) {
+          projects.push_back(sub.path());
+        }
+      }
+    }
+  }
+  ASSERT_FALSE(projects.empty()) << examplesDir;
+
+  int built = 0;
+  std::error_code ec;
+  for (const auto &projectDir : projects) {
+    const std::string name = projectDir.filename().string();
+    std::filesystem::path program = projectDir / (name + ".stride");
+    EXPECT_TRUE(std::filesystem::exists(projectDir / "README.md"))
         << "example " << name << " has no README.md";
 
     auto build = [&](const std::filesystem::path &input,
-                     const std::string &label) {
+                     const std::string &label,
+                     const std::vector<std::string> &features,
+                     const std::string &ext) {
       std::filesystem::path tempDir =
           std::filesystem::temp_directory_path(ec) / ("stride_example_" + label);
       std::filesystem::remove_all(tempDir, ec);
@@ -555,32 +590,76 @@ TEST_F(StridecDriverTest, ExamplesBuild) {
       std::ostringstream exampleErr;
       strd::BoardBuildOptions bopts;
       bopts.inputFile = input.string();
-      bopts.outputFile = (tempDir / (name + ".hex")).string();
+      bopts.outputFile = (tempDir / (name + ext)).string();
       bopts.buildDir = (tempDir / "build").string();
       bopts.strideRoot = strideRoot;
+      bopts.featureToggles = features;
+      bopts.noPrompt = true;
       EXPECT_TRUE(strd::buildBoardFirmware(bopts, exampleOut, exampleErr))
           << label << ": " << exampleErr.str();
-      EXPECT_TRUE(std::filesystem::exists(tempDir / (name + ".hex"))) << label;
+      EXPECT_TRUE(std::filesystem::exists(tempDir / (name + ext))) << label;
       std::filesystem::remove_all(tempDir, ec);
       ++built;
     };
-    build(program, name);
 
-    // Every other hardware file in the project (BlinkRigMega.stride next to
-    // BlinkRig.stride) is another board for the same program: build it with
-    // `use ... on <Rig>` and `import <Rig> as <DefaultRig>`, as the hardware
-    // file's comment tells a reader to.
     std::ifstream programIn(program);
     std::string source((std::istreambuf_iterator<char>(programIn)),
                        std::istreambuf_iterator<char>());
     programIn.close();
-    auto usePos = source.find("\nuse ");
+
+    auto featPos = source.find("feature Board");
+    if (featPos != std::string::npos) {
+      auto lb = source.find('[', featPos);
+      auto rb = source.find(']', lb);
+      ASSERT_NE(lb, std::string::npos);
+      ASSERT_NE(rb, std::string::npos);
+      std::string list = source.substr(lb + 1, rb - lb - 1);
+      std::istringstream iss(list);
+      std::string item;
+      while (std::getline(iss, item, ',')) {
+        auto start = item.find_first_not_of(" 	
+");
+        if (start == std::string::npos) {
+          continue;
+        }
+        auto end = item.find_last_not_of(" 	
+");
+        std::string variant = item.substr(start, end - start + 1);
+        strd::BoardBuildOptions inspectOpts;
+        inspectOpts.inputFile = program.string();
+        inspectOpts.strideRoot = strideRoot;
+        inspectOpts.featureToggles = {"Board::" + variant};
+        strd::BoardSpec spec;
+        std::string specErr;
+        ASSERT_TRUE(strd::inspectProgramBoard(inspectOpts, spec, specErr))
+            << name << "_" << variant << ": " << specErr;
+        if (spec.platformName == "AVR") {
+          if (hasAvr) {
+            build(program, name + "_" + variant, {"Board::" + variant}, ".hex");
+          }
+        } else if (spec.platformName == "Pico") {
+          if (hasPicoSdk) {
+            build(program, name + "_" + variant, {"Board::" + variant}, ".uf2");
+          }
+        }
+      }
+      continue;
+    }
+
+    if (!hasAvr) {
+      continue;
+    }
+    build(program, name, {}, ".hex");
+
+    auto usePos = source.find("
+use ");
     ASSERT_NE(usePos, std::string::npos) << name << " has no use line";
     auto onPos = source.find(" on ", usePos);
     ASSERT_NE(onPos, std::string::npos) << name << " has no use ... on <Board>";
-    auto lineEnd = source.find_first_of("\r\n", onPos);
+    auto lineEnd = source.find_first_of("
+", onPos);
     const std::string defaultRig = source.substr(onPos + 4, lineEnd - onPos - 4);
-    for (const auto &file : std::filesystem::directory_iterator(entry.path())) {
+    for (const auto &file : std::filesystem::directory_iterator(projectDir)) {
       const std::string stem = file.path().stem().string();
       if (file.path().extension() != ".stride" || stem == name ||
           stem == defaultRig) {
@@ -594,25 +673,27 @@ TEST_F(StridecDriverTest, ExamplesBuild) {
       }
       std::string variant = source;
       variant.replace(onPos + 4, defaultRig.size(), stem);
-      auto importPos = variant.find("import " + defaultRig + "\n");
+      auto importPos = variant.find("import " + defaultRig + "
+");
       if (importPos == std::string::npos) {
-        importPos = variant.find("import " + defaultRig + "\r");
+        importPos = variant.find("import " + defaultRig + "");
       }
       ASSERT_NE(importPos, std::string::npos)
           << name << " does not import " << defaultRig;
       variant.replace(importPos, 7 + defaultRig.size(),
                       "import " + stem + " as " + defaultRig);
-      // The variant sits next to the hardware files, so imports find them
-      auto variantPath = entry.path() / (".variant_" + stem + ".stride");
+      auto variantPath = projectDir / (".variant_" + stem + ".stride");
       {
         std::ofstream variantOut(variantPath);
         variantOut << variant;
       }
-      build(variantPath, name + "_" + stem);
+      build(variantPath, name + "_" + stem, {}, ".hex");
       std::filesystem::remove(variantPath, ec);
     }
   }
-  EXPECT_GT(built, 0);
+  if (built == 0) {
+    GTEST_SKIP() << "no board toolchains installed";
+  }
 }
 
 // The Mega's ports H to L are above the 8-bit data space: the header says

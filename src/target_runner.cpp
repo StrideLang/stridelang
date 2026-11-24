@@ -282,11 +282,15 @@ void printUnifiedHelp(std::ostream &os, const std::string &mode) {
   }
   os << "Options:\n"
      << "  -o <file>                Output artifact path\n"
+     << "  --system=<name>          Override target platform/system (alias: --platformOverride)\n"
      << "  --boardOverride=<name>   Override target board from 'use <System> "
         "on <Board>'\n";
   if (mode == "run") {
     os << "  --port=<port>, -P <port> Serial port for board upload/monitor "
-          "(auto-detected if omitted)\n";
+          "(auto-detected if omitted)\n"
+       << "  --probe                  Flash via SWD debug probe (OpenOCD)\n"
+       << "  --upload-method=<m>      Upload method: picotool, swd, or auto\n"
+       << "  --no-prompt              Do not prompt interactively for BOOTSEL or downloads\n";
   }
   os << "  --build-dir=<dir>        Directory for intermediate artifacts\n"
      << "  -O0, -O1, -O2, -O3, -Os, -Oz\n"
@@ -335,6 +339,8 @@ bool parseUnifiedOptions(const std::vector<std::string> &args,
       showHelp = true;
       return true;
     } else if (nextVal("-o", opts.outputFile)) {
+    } else if (nextVal("--system", opts.systemOverride) ||
+               nextVal("--platformOverride", opts.systemOverride)) {
     } else if (nextVal("--boardOverride", opts.boardOverride)) {
     } else if (nextVal("--port", port) || nextVal("-P", port)) {
       if (mode == "build") {
@@ -344,6 +350,19 @@ bool parseUnifiedOptions(const std::vector<std::string> &args,
         return false;
       }
       opts.serialPort = port;
+    } else if (arg == "--probe") {
+      if (mode == "build") {
+        err << "stride: error: '--probe' only applies to uploading; use 'stride flash' or 'stride run'\n";
+        return false;
+      }
+      opts.uploadMethod = "swd";
+    } else if (nextVal("--upload-method", opts.uploadMethod)) {
+      if (mode == "build") {
+        err << "stride: error: '--upload-method' only applies to uploading; use 'stride flash' or 'stride run'\n";
+        return false;
+      }
+    } else if (arg == "--no-prompt") {
+      opts.noPrompt = true;
     } else if (nextVal("--build-dir", opts.buildDir)) {
     } else if (nextVal("--strideroot", opts.strideRoot)) {
     } else if (arg == "--upload" || arg == "--flash") {
@@ -940,8 +959,7 @@ int runUnifiedCommand(const std::vector<std::string> &args,
 
   BoardSpec spec;
   std::string inspectErr;
-  const bool isBoard = inspectProgramBoard(
-      opts.inputFile, opts.strideRoot, opts.boardOverride, spec, inspectErr);
+  const bool isBoard = inspectProgramBoard(opts, spec, inspectErr);
 
   if (isBoard) {
     if (!buildBoardFirmware(opts, out, err)) {

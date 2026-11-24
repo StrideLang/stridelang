@@ -24,13 +24,16 @@ struct BoardBuildOptions {
   std::string outputFile; // .hex or .elf; empty derives from inputFile
   std::string buildDir;   // optional intermediate dir; empty creates beside output or temp
   std::string strideRoot;
+  std::string systemOverride;
   std::string boardOverride;
   std::vector<std::string> includeDirs;
   std::vector<std::string> featureToggles;
   std::vector<std::string> disabledFeatures;
   bool noDefaultFeatures = false;
   std::string serialPort;
+  std::string uploadMethod; // "", "auto", "picotool", "swd"
   bool upload = false;
+  bool noPrompt = false;
   bool verbose = false;
   bool strict = false;
   int optimizationLevel = 2;
@@ -65,6 +68,9 @@ bool inspectProgramBoard(const std::string &inputFile,
                          const std::string &strideRoot,
                          const std::string &boardOverride,
                          BoardSpec &outSpec, std::string &errorMsg);
+
+bool inspectProgramBoard(const BoardBuildOptions &opts, BoardSpec &outSpec,
+                         std::string &errorMsg);
 
 // Generates stride_board.h contents for an AVR (or port-mapped) board.
 std::string generateBoardHeader(const ResolvedHardware &hw,

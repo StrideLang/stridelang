@@ -196,3 +196,24 @@ Every option is a group of constants in `library/1.0/Gpio.stride` (a `typeClass`
 ### 6.5 Cost on AVR
 
 The addresses are constants, so there is no call and no table lookup. Writing a constant level (the startup writes, `on >> DigitalOut(...)`) is a single `sbi`/`cbi`. Writing a level known only at run time is a read-modify-write of the constant register (`in`, `andi`/`ori`, `out`): a few cycles, and not atomic against an interrupt that writes the same port. On ports with set/clear registers (STM32 BSRR, RP2040 SIO, nRF OUTSET/OUTCLR) every write is one store.
+
+---
+
+## 7. Building One Program for Multiple Platforms
+
+Portable programs using standard domain aliases (`PlatformLoopDomain`, `PlatformTimerDomain`) and portable packages (`DigitalIO`, `Strings`) can target multiple platforms in two ways:
+
+1. **CLI Overrides (`--system` / `--boardOverride`)**: Keep a single `use` statement (or omit it in portable files) and override the platform and board at build time:
+   ```powershell
+   stride build PortableBlink.stride --system=Pico --boardOverride=PicoBlinkRig
+   ```
+2. **Conditional `use` / `import` with `@with`**: When different platforms need different hardware rig imports or conditional code, gate `use` and `import` with `@with(...)` and select the variant via `-D`:
+   ```stride
+   feature Target { variants: [AVR, Pico] default: AVR }
+
+   @with(Target::AVR)  use AVR version 1.0 on AvrBlinkRig
+   @with(Target::Pico) use Pico version 1.0 on PicoBlinkRig
+   ```
+   ```powershell
+   stride build Blink.stride -D Target::Pico
+   ```

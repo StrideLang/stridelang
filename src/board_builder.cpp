@@ -18,12 +18,15 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <set>
 #include <sstream>
+#include <thread>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -32,7 +35,10 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <io.h>
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace strd {
@@ -227,22 +233,87 @@ std::string findInArduinoPackages(const std::string &packageSubdir,
 
 } // namespace
 
-bool inspectProgramBoard(const std::string &inputFile,
-                         const std::string &strideRoot,
-                         const std::string &boardOverride,
-                         BoardSpec &outSpec, std::string &errorMsg) {
-  ASTNode tree = AST::parseFile(inputFile.c_str());
+bool inspectProgramBoard(const BoardBuildOptions &opts, BoardSpec &outSpec,
+                         std::string &errorMsg) {
+  ASTNode tree = AST::parseFile(opts.inputFile.c_str());
   if (!tree) {
-    errorMsg = "failed to parse '" + inputFile + "'";
+    errorMsg = "failed to parse '" + opts.inputFile + "'";
     return false;
   }
 
+  FeatureConfig featConfig;
+  featConfig.useDefaultFeatures = !opts.noDefaultFeatures;
+  for (const auto &f : opts.featureToggles) {
+    const auto sep = f.find("::");
+    if (sep != std::string::npos) {
+      featConfig.exclusiveChoices[f.substr(0, sep)] = f.substr(sep + 2);
+    }
+    featConfig.enabledFeatures.insert(f);
+  }
+  for (const auto &d : opts.disabledFeatures) {
+    featConfig.disabledFeatures.insert(d);
+  }
+  FeatureResolver featResolver(tree, featConfig);
+  if (!featResolver.process()) {
+    const auto &errs = featResolver.getErrors();
+    errorMsg = errs.empty() ? "feature resolution failed"
+                            : errs.front().getErrorText();
+    return false;
+  }
+
+  const std::string effectiveRoot =
+      opts.strideRoot.empty() ? ASTFunctions::getDefaultStrideRoot()
+                              : opts.strideRoot;
+
   auto systems = ASTQuery::getSystemNodes(tree);
   if (systems.empty()) {
-    if (!boardOverride.empty()) {
-      outSpec.platformName = "AVR";
-      outSpec.boardName = boardOverride;
-      outSpec.frameworkName = "AVR";
+    if (!opts.boardOverride.empty() || !opts.systemOverride.empty()) {
+      std::string plat = opts.systemOverride;
+      std::string board = opts.boardOverride;
+      if (plat.empty() && !board.empty()) {
+        HardwareResolver resolver(effectiveRoot);
+        std::error_code platEc;
+        const std::filesystem::path platRoot =
+            std::filesystem::path(effectiveRoot) / "platforms";
+        if (std::filesystem::is_directory(platRoot, platEc)) {
+          for (const auto &entry :
+               std::filesystem::directory_iterator(platRoot, platEc)) {
+            if (!entry.is_directory(platEc)) {
+              continue;
+            }
+            const std::string candidate = entry.path().filename().string();
+            if (resolver.resolve(candidate, board)) {
+              plat = candidate;
+              break;
+            }
+          }
+        }
+      }
+      if (board.empty() && !plat.empty()) {
+        const std::filesystem::path platFile =
+            std::filesystem::path(effectiveRoot) / "platforms" / plat /
+            "Platform.stride";
+        if (std::filesystem::exists(platFile)) {
+          if (ASTNode platTree = AST::parseFile(platFile.string().c_str())) {
+            for (const auto &child : platTree->getChildren()) {
+              if (child && child->getNodeType() == AST::Declaration) {
+                auto decl = std::static_pointer_cast<DeclarationNode>(child);
+                if (decl->getEntityType() == "platform") {
+                  board = HardwareResolver::valueText(
+                      decl->getPropertyValue("defaultDevice"));
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      if (plat.empty() || board.empty()) {
+        return false;
+      }
+      outSpec.platformName = plat;
+      outSpec.boardName = board;
+      outSpec.frameworkName = plat;
       outSpec.frameworkVersion = "1.0";
       return true;
     }
@@ -250,8 +321,9 @@ bool inspectProgramBoard(const std::string &inputFile,
   }
 
   const auto &sysNode = systems.front();
-  std::string systemName = sysNode->platformName();
-  std::string targetBoard = boardOverride;
+  std::string systemName =
+      opts.systemOverride.empty() ? sysNode->platformName() : opts.systemOverride;
+  std::string targetBoard = opts.boardOverride;
   if (targetBoard.empty()) {
     auto hw = sysNode->hwPlatforms();
     if (!hw.empty()) {
@@ -262,26 +334,37 @@ bool inspectProgramBoard(const std::string &inputFile,
     return false;
   }
 
-  std::string effectiveRoot =
-      strideRoot.empty() ? ASTFunctions::getDefaultStrideRoot() : strideRoot;
-
   outSpec.platformName = systemName;
   outSpec.boardName = targetBoard;
   outSpec.frameworkName = systemName;
   outSpec.frameworkVersion =
-      (sysNode->majorVersion() >= 0 && sysNode->minorVersion() >= 0)
+      (opts.systemOverride.empty() && sysNode->majorVersion() >= 0 &&
+       sysNode->minorVersion() >= 0)
           ? (std::to_string(sysNode->majorVersion()) + "." +
              std::to_string(sysNode->minorVersion()))
           : "1.0";
 
-  StrideSystem sys(effectiveRoot, systemName, sysNode->majorVersion(),
-                   sysNode->minorVersion(), {}, FeatureConfig());
+  StrideSystem sys(effectiveRoot, systemName,
+                   opts.systemOverride.empty() ? sysNode->majorVersion() : 1,
+                   opts.systemOverride.empty() ? sysNode->minorVersion() : 0,
+                   {}, featConfig);
   auto frameworks = sys.getFrameworks();
   if (!frameworks.empty()) {
     outSpec.frameworkName = frameworks.front()->getFramework();
     outSpec.frameworkVersion = frameworks.front()->getFrameworkVersion();
   }
   return true;
+}
+
+bool inspectProgramBoard(const std::string &inputFile,
+                         const std::string &strideRoot,
+                         const std::string &boardOverride,
+                         BoardSpec &outSpec, std::string &errorMsg) {
+  BoardBuildOptions opts;
+  opts.inputFile = inputFile;
+  opts.strideRoot = strideRoot;
+  opts.boardOverride = boardOverride;
+  return inspectProgramBoard(opts, outSpec, errorMsg);
 }
 
 std::string generateBoardHeader(const ResolvedHardware &hw,
@@ -483,13 +566,6 @@ std::string generateBoardHeader(const ResolvedHardware &hw,
                     std::static_pointer_cast<ValueNode>(vp)->getStringValue();
               }
             }
-            if (isrVec.empty()) {
-              auto cfg = GpioPinConfig::fromDeclaration(pIt->second);
-              auto bp = hw.boardPin(cfg.label);
-              if (bp && bp->interruptSource) {
-                isrVec = bp->interruptSource->vector;
-              }
-            }
           }
         }
       }
@@ -544,6 +620,654 @@ std::string generateBoardHeader(const ResolvedHardware &hw,
   }
 
   return ss.str();
+}
+
+std::string findTool(const std::string &toolName, const std::string &toolKey,
+                     const std::string &strideRoot) {
+  if (auto p = findInPath(toolName); !p.empty()) {
+    return p;
+  }
+  if (!strideRoot.empty() && !toolKey.empty()) {
+    ToolManager tm(strideRoot);
+    auto it = tm.localTools.find(toolKey);
+    if (it != tm.localTools.end() && !it->second.empty()) {
+      std::filesystem::path toolPath(it->second);
+      auto sibling = findExecutableInDir(toolPath.parent_path(), toolName);
+      if (!sibling.empty()) {
+        return sibling;
+      }
+    }
+  }
+  return {};
+}
+
+bool prepareStringRuntimeSources(const std::filesystem::path &workDir,
+                                 std::filesystem::path &outRtDir,
+                                 std::filesystem::path &outStringSrc,
+                                 std::ostream &err) {
+#ifdef STRIDEC_EMBEDDED_RUNTIME
+  outRtDir = workDir / "stride_rt";
+  const std::filesystem::path statusDir = outRtDir / "stride" / "stridejit";
+  std::error_code ec;
+  std::filesystem::create_directories(statusDir, ec);
+  auto writeEmbedded = [&](const std::filesystem::path &path,
+                           const unsigned char *bytes, size_t size) {
+    std::ofstream file(path, std::ios::binary);
+    file.write(reinterpret_cast<const char *>(bytes),
+               static_cast<std::streamsize>(size));
+    return static_cast<bool>(file);
+  };
+  outStringSrc = outRtDir / "strideruntime_string.c";
+  if (!writeEmbedded(outStringSrc, kStringRuntimeSource,
+                     sizeof(kStringRuntimeSource) - 1) ||
+      !writeEmbedded(statusDir / "stride_status.h", kStatusHeaderSource,
+                     sizeof(kStatusHeaderSource) - 1)) {
+    err << "stride: error: failed to write the string runtime to "
+        << outRtDir.string() << "\n";
+    return false;
+  }
+  return true;
+#else
+  (void)workDir;
+  (void)outRtDir;
+  (void)outStringSrc;
+  err << "stride: error: embedded string runtime is not available in this build\n";
+  return false;
+#endif
+}
+
+bool isInteractiveTerminal() {
+#ifdef _WIN32
+  return _isatty(_fileno(stdin)) != 0 && _isatty(_fileno(stdout)) != 0;
+#else
+  return isatty(STDIN_FILENO) != 0 && isatty(STDOUT_FILENO) != 0;
+#endif
+}
+
+std::filesystem::path userHomeDir() {
+#ifdef _WIN32
+  const char *home = std::getenv("USERPROFILE");
+  if (!home || !*home) {
+    home = std::getenv("LOCALAPPDATA");
+  }
+#else
+  const char *home = std::getenv("HOME");
+#endif
+  if (!home || !*home) {
+    return {};
+  }
+  return std::filesystem::path(home);
+}
+
+std::filesystem::path findNewestSubdir(const std::filesystem::path &parent) {
+  std::error_code ec;
+  if (!std::filesystem::is_directory(parent, ec)) {
+    return {};
+  }
+  std::vector<std::filesystem::path> dirs;
+  for (const auto &entry : std::filesystem::directory_iterator(parent, ec)) {
+    if (entry.is_directory(ec)) {
+      dirs.push_back(entry.path());
+    }
+  }
+  if (dirs.empty()) {
+    return {};
+  }
+  std::sort(dirs.begin(), dirs.end());
+  return dirs.back();
+}
+
+std::filesystem::path findPicoVsCodeSdk(std::filesystem::path &outVsCodeRoot) {
+  const std::filesystem::path home = userHomeDir();
+  if (home.empty()) {
+    return {};
+  }
+  const std::filesystem::path vsCodeRoot = home / ".pico-sdk";
+  const std::filesystem::path sdk = findNewestSubdir(vsCodeRoot / "sdk");
+  if (!sdk.empty() &&
+      std::filesystem::exists(sdk / "external" / "pico_sdk_import.cmake")) {
+    outVsCodeRoot = vsCodeRoot;
+    return sdk;
+  }
+  return {};
+}
+
+std::string findPicoVsCodeTool(const std::filesystem::path &vsCodeRoot,
+                               const std::string &toolDir,
+                               const std::string &exeName) {
+  if (vsCodeRoot.empty()) {
+    return {};
+  }
+  const std::filesystem::path verDir = findNewestSubdir(vsCodeRoot / toolDir);
+  if (verDir.empty()) {
+    return {};
+  }
+  for (const auto &cand : {verDir, verDir / "bin", verDir / exeName}) {
+    if (auto p = findExecutableInDir(cand, exeName); !p.empty()) {
+      return p;
+    }
+  }
+  return {};
+}
+
+std::filesystem::path strideToolsCacheDir() {
+#ifdef _WIN32
+  const char *home = std::getenv("USERPROFILE");
+  if (!home || !*home) {
+    home = std::getenv("LOCALAPPDATA");
+  }
+#else
+  const char *home = std::getenv("HOME");
+#endif
+  if (!home || !*home) {
+    return std::filesystem::temp_directory_path() / "stride_tools";
+  }
+  return std::filesystem::path(home) / ".stride" / "tools";
+}
+
+std::string findCachedOpenOcd(const std::filesystem::path &rootDir) {
+  std::error_code ec;
+  if (!std::filesystem::exists(rootDir, ec)) {
+    return {};
+  }
+#ifdef _WIN32
+  const std::string exeName = "openocd.exe";
+#else
+  const std::string exeName = "openocd";
+#endif
+  for (auto it = std::filesystem::recursive_directory_iterator(rootDir, ec);
+       it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+    if (ec) {
+      break;
+    }
+    if (it->is_regular_file(ec) && it->path().filename() == exeName) {
+      return it->path().string();
+    }
+  }
+  return {};
+}
+
+// Reusable across any platform/board that declares upload.openocdTarget.
+// Locates OpenOCD in PATH / ToolManager / ~/.stride/tools/openocd, or downloads
+// the version specified by the board's upload.openocdUrl* properties.
+std::string ensureOpenOcd(const ResolvedHardware &hw,
+                          const BoardBuildOptions &opts,
+                          const std::string &strideRoot, std::ostream &out,
+                          std::ostream &err) {
+  if (auto p = findTool("openocd", "OpenOCD", strideRoot); !p.empty()) {
+    return p;
+  }
+
+  const std::filesystem::path cacheDir = strideToolsCacheDir() / "openocd";
+  {
+    std::filesystem::path vsCodeRoot;
+    if (!findPicoVsCodeSdk(vsCodeRoot).empty()) {
+      if (auto p = findPicoVsCodeTool(vsCodeRoot, "openocd", "openocd"); !p.empty()) {
+        return p;
+      }
+    }
+  }
+  if (const char *picoSdkEnv = std::getenv("PICO_SDK_PATH");
+      picoSdkEnv && *picoSdkEnv) {
+    std::filesystem::path sdk(picoSdkEnv);
+    sdk = sdk.lexically_normal();
+    if (sdk.filename().empty() && sdk.has_parent_path()) {
+      sdk = sdk.parent_path();
+    }
+    std::filesystem::path root =
+        (sdk.filename() == "pico-sdk") ? sdk.parent_path() : sdk;
+    for (const auto &rel : {"openocd", "openocd/bin"}) {
+      if (auto p = findExecutableInDir(root / rel, "openocd"); !p.empty()) {
+        return p;
+      }
+    }
+  }
+  if (auto cached = findCachedOpenOcd(cacheDir); !cached.empty()) {
+    return cached;
+  }
+
+#ifdef _WIN32
+  const char *urlKey = "openocdUrlWin";
+  const char *archiveExt = ".zip";
+#elif defined(__APPLE__)
+  const char *urlKey = "openocdUrlMac";
+  const char *archiveExt = ".tar.gz";
+#else
+  const char *urlKey = "openocdUrlLinux";
+  const char *archiveExt = ".tar.gz";
+#endif
+
+  const std::string url = hw.blockString("upload", urlKey);
+  if (url.empty()) {
+    err << "stride: error: openocd not found and board '" << hw.name()
+        << "' specifies no upload." << urlKey << " download URL\n";
+    return {};
+  }
+
+  const std::string minVer = hw.blockString("upload", "openocdMinVersion");
+  if (!opts.noPrompt && isInteractiveTerminal()) {
+    out << "OpenOCD" << (minVer.empty() ? "" : (" (>= " + minVer + ")"))
+        << " is not installed.\n"
+        << "Download from " << url << " into " << cacheDir.string()
+        << "? [Y/n] " << std::flush;
+    std::string reply;
+    std::getline(std::cin, reply);
+    if (!reply.empty() && reply[0] != 'y' && reply[0] != 'Y') {
+      err << "stride: error: OpenOCD download cancelled by user\n";
+      return {};
+    }
+  } else {
+    out << "Downloading OpenOCD from " << url << "...\n";
+  }
+
+  const std::string curlExe = findInPath("curl");
+  const std::string tarExe = findInPath("tar");
+  if (curlExe.empty() || tarExe.empty()) {
+    err << "stride: error: 'curl' and 'tar' are required to download OpenOCD automatically\n";
+    return {};
+  }
+
+  std::error_code ec;
+  std::filesystem::create_directories(cacheDir, ec);
+  const std::filesystem::path archivePath =
+      cacheDir / (std::string("openocd_download") + archiveExt);
+
+  if (runSubprocess(curlExe, {"-fsSL", "-L", url, "-o", archivePath.string()},
+                    opts.verbose, out) != 0) {
+    err << "stride: error: failed to download OpenOCD from " << url << "\n";
+    return {};
+  }
+#ifdef _WIN32
+  if (std::string(archiveExt) == ".zip") {
+    const std::string psExe = findInPath("powershell");
+    if (psExe.empty()) {
+      err << "stride: error: powershell is required to extract " << archivePath.string() << "\n";
+      return {};
+    }
+    const std::string psCmd =
+        "Expand-Archive -LiteralPath '" + archivePath.string() +
+        "' -DestinationPath '" + cacheDir.string() + "' -Force";
+    if (runSubprocess(psExe, {"-NoProfile", "-Command", psCmd}, opts.verbose, out) != 0) {
+      err << "stride: error: failed to extract " << archivePath.string() << "\n";
+      return {};
+    }
+  } else
+#endif
+  if (runSubprocess(tarExe, {"-xf", archivePath.string(), "-C", cacheDir.string()},
+                    opts.verbose, out) != 0) {
+    err << "stride: error: failed to extract " << archivePath.string() << "\n";
+    return {};
+  }
+  std::filesystem::remove(archivePath, ec);
+
+  std::string installed = findCachedOpenOcd(cacheDir);
+  if (installed.empty()) {
+    err << "stride: error: OpenOCD archive extracted to " << cacheDir.string()
+        << " but openocd executable was not found\n";
+    return {};
+  }
+  out << "Installed OpenOCD to " << installed << "\n";
+  return installed;
+}
+
+std::string uploadSubBlockString(const ResolvedHardware &hw,
+                                 const std::string &subBlock,
+                                 const std::string &key,
+                                 const std::string &defaultValue = "") {
+  if (auto sub = hw.blockValue("upload", subBlock);
+      sub && sub->getNodeType() == AST::Declaration) {
+    auto decl = std::static_pointer_cast<DeclarationNode>(sub);
+    const std::string val = HardwareResolver::valueText(decl->getPropertyValue(key));
+    if (!val.empty()) {
+      return val;
+    }
+  }
+  return defaultValue;
+}
+
+std::optional<int64_t> uploadSubBlockInt(const ResolvedHardware &hw,
+                                         const std::string &subBlock,
+                                         const std::string &key) {
+  if (auto sub = hw.blockValue("upload", subBlock);
+      sub && sub->getNodeType() == AST::Declaration) {
+    auto decl = std::static_pointer_cast<DeclarationNode>(sub);
+    if (auto val = decl->getPropertyValue(key)) {
+      if (val->getNodeType() == AST::Int) {
+        return std::static_pointer_cast<ValueNode>(val)->getIntValue();
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+bool flashWithOpenOcd(const ResolvedHardware &hw,
+                      const std::filesystem::path &elfPath,
+                      const BoardBuildOptions &opts,
+                      const std::string &strideRoot, std::ostream &out,
+                      std::ostream &err) {
+  const std::string targetCfg = uploadSubBlockString(hw, "openocd", "target", hw.blockString("upload", "openocdTarget"));
+  if (targetCfg.empty()) {
+    err << "stride: error: board '" << hw.name()
+        << "' does not declare upload.openocdTarget for SWD flashing\n";
+    return false;
+  }
+  const std::string ifaceCfg = uploadSubBlockString(hw, "openocd", "interface", hw.blockString("upload", "openocdInterface", "interface/cmsis-dap.cfg"));
+  const int64_t speedKhz = uploadSubBlockInt(hw, "openocd", "speed").value_or(hw.blockInt("upload", "openocdSpeed").value_or(5000));
+
+  const std::string openocdExe = ensureOpenOcd(hw, opts, strideRoot, out, err);
+  if (openocdExe.empty()) {
+    return false;
+  }
+
+  const std::string elfGeneric = elfPath.generic_string();
+  std::vector<std::string> args;
+  const std::filesystem::path openocdDir =
+      std::filesystem::path(openocdExe).parent_path();
+  if (std::filesystem::exists(openocdDir / "scripts")) {
+    args.push_back("-s");
+    args.push_back((openocdDir / "scripts").generic_string());
+  } else if (std::filesystem::exists(openocdDir.parent_path() / "share" /
+                                     "openocd" / "scripts")) {
+    args.push_back("-s");
+    args.push_back(
+        (openocdDir.parent_path() / "share" / "openocd" / "scripts")
+            .generic_string());
+  }
+  args.insert(args.end(),
+              {"-f", ifaceCfg, "-f", targetCfg, "-c",
+               "adapter speed " + std::to_string(speedKhz), "-c",
+               "program " + elfGeneric + " verify reset exit"});
+
+  if (runSubprocess(openocdExe, args, opts.verbose, out) != 0) {
+    err << "stride: error: OpenOCD SWD flash failed (check probe connection and target)\n";
+    return false;
+  }
+  out << "Flashed " << elfPath.string() << " to " << hw.name()
+      << " via OpenOCD SWD\n";
+  return true;
+}
+
+bool flashPicoWithPicotool(const std::filesystem::path &uf2Path,
+                           const ResolvedHardware &hw,
+                           const BoardBuildOptions &opts,
+                           const std::string &picotoolExe, std::ostream &out,
+                           std::ostream &err) {
+  auto tryLoad = [&]() {
+    return runSubprocess(picotoolExe, {"load", "-f", "-x", uf2Path.string()},
+                         opts.verbose, out) == 0;
+  };
+
+  if (tryLoad()) {
+    out << "Uploaded " << uf2Path.string() << " to " << hw.name() << "\n";
+    return true;
+  }
+
+  if (opts.noPrompt || !isInteractiveTerminal()) {
+    err << "stride: error: no Raspberry Pi Pico detected in BOOTSEL or USB-reset mode.\n"
+        << "Hold BOOTSEL while connecting USB, or use a Debug Probe (--probe).\n";
+    return false;
+  }
+
+  const std::string customPrompt = uploadSubBlockString(hw, "picotool", "preparePrompt", hw.blockString("upload", "preparePrompt"));
+  out << "\nNo " << hw.name() << " detected in bootloader/USB-reset mode.\n"
+      << "To prepare " << hw.name() << " for USB flashing:\n  "
+      << (customPrompt.empty()
+              ? "Put the board into bootloader mode and reconnect USB."
+              : customPrompt)
+      << "\nWaiting for board (press Ctrl+C to cancel)..." << std::endl;
+
+  constexpr int kMaxWaitSeconds = 60;
+  for (int i = 0; i < kMaxWaitSeconds * 2; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    if (runSubprocess(picotoolExe, {"info"}, /*verbose=*/false, out) == 0) {
+      if (tryLoad()) {
+        out << "Uploaded " << uf2Path.string() << " to " << hw.name() << "\n";
+        return true;
+      }
+      break;
+    }
+  }
+  err << "stride: error: timed out waiting for " << hw.name()
+      << " in BOOTSEL mode\n";
+  return false;
+}
+
+bool buildAndUploadPicoFirmware(const BoardBuildOptions &opts,
+                                const BoardSpec &spec,
+                                const ResolvedHardware &hw,
+                                const std::string &strideRoot,
+                                const std::filesystem::path &workDir,
+                                const std::filesystem::path &progObj,
+                                const std::filesystem::path &outPath,
+                                const std::filesystem::path &elfPath,
+                                std::ostream &out, std::ostream &err) {
+
+  const std::string picoBoard = uploadSubBlockString(hw, "picotool", "board", hw.blockString("upload", "board", hw.name()));
+
+  std::filesystem::path picoSdkPath;
+  std::filesystem::path picoInstallerRoot;
+  std::filesystem::path picoVsCodeRoot;
+
+  if (const char *picoSdkEnv = std::getenv("PICO_SDK_PATH");
+      picoSdkEnv && *picoSdkEnv && std::filesystem::exists(picoSdkEnv)) {
+    picoSdkPath = std::filesystem::path(picoSdkEnv).lexically_normal();
+    if (picoSdkPath.filename().empty() && picoSdkPath.has_parent_path()) {
+      picoSdkPath = picoSdkPath.parent_path();
+    }
+    if (!std::filesystem::exists(picoSdkPath / "external" / "pico_sdk_import.cmake")) {
+      if (std::filesystem::exists(picoSdkPath / "pico-sdk" / "external" / "pico_sdk_import.cmake")) {
+        picoInstallerRoot = picoSdkPath;
+        picoSdkPath = picoSdkPath / "pico-sdk";
+      } else if (picoSdkPath.filename() == ".pico-sdk") {
+        picoVsCodeRoot = picoSdkPath;
+        picoSdkPath = findNewestSubdir(picoVsCodeRoot / "sdk");
+      }
+    } else if (picoSdkPath.filename() == "pico-sdk") {
+      picoInstallerRoot = picoSdkPath.parent_path();
+    } else if (picoSdkPath.parent_path().filename() == "sdk" &&
+               picoSdkPath.parent_path().parent_path().filename() == ".pico-sdk") {
+      picoVsCodeRoot = picoSdkPath.parent_path().parent_path();
+    }
+  }
+
+  // If PICO_SDK_PATH is unset, or lacks pico2 (e.g. v1.5.1) when building for
+  // RP2350, fall back to ~/.pico-sdk/sdk/<latest>.
+  if (picoSdkPath.empty() ||
+      !std::filesystem::exists(picoSdkPath / "external" / "pico_sdk_import.cmake") ||
+      (picoBoard == "pico2" &&
+       !std::filesystem::exists(picoSdkPath / "src" / "boards" / "include" / "boards" / "pico2.h"))) {
+    std::filesystem::path vsCodeRoot;
+    std::filesystem::path vsCodeSdk = findPicoVsCodeSdk(vsCodeRoot);
+    if (!vsCodeSdk.empty()) {
+      picoSdkPath = vsCodeSdk;
+      picoVsCodeRoot = vsCodeRoot;
+      picoInstallerRoot.clear();
+    }
+  }
+
+  if (picoSdkPath.empty() ||
+      !std::filesystem::exists(picoSdkPath / "external" / "pico_sdk_import.cmake")) {
+    const std::string codeExe = findInPath("code");
+    if (!opts.noPrompt && isInteractiveTerminal() && !codeExe.empty()) {
+      out << "Raspberry Pi Pico SDK not found (PICO_SDK_PATH or ~/.pico-sdk).\n"
+          << "Install the Raspberry Pi Pico VS Code extension (raspberry-pi.raspberry-pi-pico)? [Y/n] "
+          << std::flush;
+      std::string reply;
+      std::getline(std::cin, reply);
+      if (reply.empty() || reply[0] == 'y' || reply[0] == 'Y') {
+        if (runSubprocess(codeExe,
+                          {"--install-extension", "raspberry-pi.raspberry-pi-pico"},
+                          opts.verbose, out) == 0) {
+          out << "Installed raspberry-pi.raspberry-pi-pico. Open VS Code to let it download ~/.pico-sdk, or set PICO_SDK_PATH.\n";
+        }
+      }
+    }
+    err << "stride: error: pico-sdk not found (set PICO_SDK_PATH or install via ~/.pico-sdk / 'code --install-extension raspberry-pi.raspberry-pi-pico')\n";
+    return false;
+  }
+
+  auto findPicoBundleTool = [&](const std::string &toolName,
+                                const std::string &toolKey,
+                                const std::string &subDir) -> std::string {
+    if (!picoVsCodeRoot.empty()) {
+      if (auto p = findPicoVsCodeTool(picoVsCodeRoot, subDir, toolName);
+          !p.empty()) {
+        return p;
+      }
+    }
+    if (!picoInstallerRoot.empty()) {
+      for (const auto &rel : {subDir, subDir + "/bin"}) {
+        if (auto p = findExecutableInDir(picoInstallerRoot / rel, toolName);
+            !p.empty()) {
+          return p;
+        }
+      }
+    }
+    return findTool(toolName, toolKey, strideRoot);
+  };
+
+  const std::string cmakeExe = findPicoBundleTool("cmake", "CMake", "cmake");
+  if (cmakeExe.empty()) {
+    err << "stride: error: cmake not found in PATH or ToolManager\n";
+    return false;
+  }
+
+  const std::string ninjaExe = findPicoBundleTool("ninja", "", "ninja");
+  const bool useSwd = (opts.uploadMethod == "swd");
+  const bool useAuto = (opts.uploadMethod == "auto");
+  std::string picotoolExe = findPicoBundleTool("picotool", "Picotool", "picotool");
+  if (opts.upload && !useSwd) {
+    picotoolExe = findPicoBundleTool("picotool", "Picotool", "picotool");
+    if (picotoolExe.empty() && !useAuto) {
+      err << "stride: error: picotool not found in PATH or ToolManager (or pass --probe for SWD)\n";
+      return false;
+    }
+  }
+
+  const std::filesystem::path runtimeDir =
+      std::filesystem::path(strideRoot) / "frameworks" / spec.frameworkName /
+      spec.frameworkVersion / "runtime";
+  if (!std::filesystem::exists(runtimeDir / "CMakeLists.txt")) {
+    err << "stride: error: Pico runtime CMakeLists.txt not found: "
+        << (runtimeDir / "CMakeLists.txt").string() << "\n";
+    return false;
+  }
+
+  std::filesystem::path rtDir;
+  std::filesystem::path stringSrc;
+  if (!prepareStringRuntimeSources(workDir, rtDir, stringSrc, err)) {
+    return false;
+  }
+
+  const std::filesystem::path cmakeBuildDir = workDir / "pico_cmake";
+  if (!ninjaExe.empty() &&
+      (std::filesystem::exists(cmakeBuildDir / "CMakeCache.txt") ||
+       std::filesystem::exists(cmakeBuildDir / "CMakeFiles"))) {
+    std::string cacheText;
+    if (std::ifstream cacheIn(cmakeBuildDir / "CMakeCache.txt"); cacheIn) {
+      cacheText.assign((std::istreambuf_iterator<char>(cacheIn)),
+                       std::istreambuf_iterator<char>());
+    }
+    if (cacheText.find("CMAKE_GENERATOR:INTERNAL=Ninja") == std::string::npos ||
+        cacheText.find("PICO_SDK_PATH:PATH=" + picoSdkPath.generic_string()) ==
+            std::string::npos) {
+      std::error_code rmEc;
+      std::filesystem::remove_all(cmakeBuildDir, rmEc);
+    }
+  }
+
+  std::vector<std::string> configArgs = {
+      "-S",
+      runtimeDir.string(),
+      "-B",
+      cmakeBuildDir.string(),
+      "-DPICO_SDK_PATH=" + picoSdkPath.generic_string(),
+      "-DPICO_BOARD=" + picoBoard,
+      "-DSTRIDE_PROGRAM_OBJ=" + std::filesystem::absolute(progObj).string(),
+      "-DSTRIDE_STRING_RUNTIME=" + std::filesystem::absolute(stringSrc).string(),
+      "-DSTRIDE_JIT_INCLUDE_DIR=" + std::filesystem::absolute(rtDir).generic_string()};
+  if (!ninjaExe.empty()) {
+    configArgs.push_back("-G");
+    configArgs.push_back("Ninja");
+    configArgs.push_back("-DCMAKE_MAKE_PROGRAM=" +
+                         std::filesystem::path(ninjaExe).generic_string());
+  }
+  if (!picoVsCodeRoot.empty()) {
+    const std::filesystem::path tcDir = findNewestSubdir(picoVsCodeRoot / "toolchain");
+    if (!tcDir.empty() && std::filesystem::exists(tcDir / "bin")) {
+      configArgs.push_back("-DPICO_TOOLCHAIN_PATH=" + tcDir.generic_string());
+    }
+  } else if (!picoInstallerRoot.empty() &&
+             std::filesystem::exists(picoInstallerRoot / "gcc-arm-none-eabi" / "bin")) {
+    configArgs.push_back("-DPICO_TOOLCHAIN_PATH=" +
+                         (picoInstallerRoot / "gcc-arm-none-eabi").generic_string());
+  }
+  if (!picotoolExe.empty()) {
+    const std::filesystem::path picotoolDir =
+        std::filesystem::path(picotoolExe).parent_path();
+    if (std::filesystem::exists(picotoolDir / "picotoolConfig.cmake")) {
+      configArgs.push_back("-Dpicotool_DIR=" + picotoolDir.generic_string());
+    }
+  }
+  if (runSubprocess(cmakeExe, configArgs, opts.verbose, out) != 0) {
+    err << "stride: error: pico-sdk CMake configure failed\n";
+    return false;
+  }
+
+  if (runSubprocess(cmakeExe, {"--build", cmakeBuildDir.string(), "--parallel"},
+                    opts.verbose, out) != 0) {
+    err << "stride: error: pico-sdk build failed\n";
+    return false;
+  }
+
+  const std::filesystem::path builtUf2 = cmakeBuildDir / "stride_firmware.uf2";
+  const std::filesystem::path builtElf = cmakeBuildDir / "stride_firmware.elf";
+  if (!std::filesystem::exists(builtUf2)) {
+    err << "stride: error: expected UF2 not produced: " << builtUf2.string()
+        << "\n";
+    return false;
+  }
+
+  std::filesystem::path uf2Path = outPath;
+  if (uf2Path.extension() == ".elf") {
+    uf2Path.replace_extension(".uf2");
+  }
+  std::error_code ec;
+  std::filesystem::copy_file(builtUf2, uf2Path,
+                             std::filesystem::copy_options::overwrite_existing,
+                             ec);
+  if (ec) {
+    err << "stride: error: failed to copy UF2 to " << uf2Path.string() << ": "
+        << ec.message() << "\n";
+    return false;
+  }
+  if (std::filesystem::exists(builtElf)) {
+    std::filesystem::copy_file(builtElf, elfPath,
+                               std::filesystem::copy_options::overwrite_existing,
+                               ec);
+  }
+
+  out << "Built firmware: " << uf2Path.string() << "\n";
+
+  if (opts.upload) {
+    if (useSwd) {
+      return flashWithOpenOcd(hw, elfPath, opts, strideRoot, out, err);
+    }
+    if (useAuto) {
+      // Prefer OpenOCD SWD when an OpenOCD binary is already available, else picotool.
+      if (!findTool("openocd", "OpenOCD", strideRoot).empty() ||
+          !findCachedOpenOcd(strideToolsCacheDir() / "openocd").empty()) {
+        if (flashWithOpenOcd(hw, elfPath, opts, strideRoot, out, err)) {
+          return true;
+        }
+      }
+      if (picotoolExe.empty()) {
+        return flashWithOpenOcd(hw, elfPath, opts, strideRoot, out, err);
+      }
+    }
+    return flashPicoWithPicotool(uf2Path, hw, opts, picotoolExe, out, err);
+  }
+  return true;
 }
 
 std::string findAvrTool(const std::string &toolName,
@@ -749,8 +1473,7 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
 
   BoardSpec spec;
   std::string inspectErr;
-  if (!inspectProgramBoard(opts.inputFile, strideRoot, opts.boardOverride, spec,
-                           inspectErr)) {
+  if (!inspectProgramBoard(opts, spec, inspectErr)) {
     err << "stride: error: "
         << (inspectErr.empty()
                 ? "could not determine target board from 'use <System> on <Board>' (or --boardOverride)"
@@ -785,24 +1508,46 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
     return false;
   }
 
-  if (triple != "avr") {
-    err << "stride: error: board firmware build currently supports triple 'avr' (got '"
-        << triple << "')\n";
+  const std::filesystem::path runtimeDir =
+      std::filesystem::path(strideRoot) / "frameworks" / spec.frameworkName /
+      spec.frameworkVersion / "runtime";
+  const bool hasCmakeRuntime =
+      std::filesystem::exists(runtimeDir / "CMakeLists.txt");
+  const bool isAvr = (triple == "avr");
+  if (!isAvr && !hasCmakeRuntime) {
+    err << "stride: error: no supported runtime build recipe found for '"
+        << hw->name() << "' (triple '" << triple << "')\n";
     return false;
   }
 
+  std::string defaultExt = ".hex";
+  if (auto imgList = hw->property("image");
+      imgList && imgList->getNodeType() == AST::List) {
+    for (const auto &step : imgList->getChildren()) {
+      if (step && step->getNodeType() == AST::Declaration) {
+        auto decl = std::static_pointer_cast<DeclarationNode>(step);
+        const std::string kind =
+            HardwareResolver::valueText(decl->getPropertyValue("kind"));
+        if (!kind.empty()) {
+          defaultExt = "." + kind;
+          break;
+        }
+      }
+    }
+  }
   std::filesystem::path inPath(opts.inputFile);
   std::string stem = inPath.stem().string();
   std::filesystem::path outPath =
       opts.outputFile.empty()
-          ? (inPath.parent_path().empty() ? std::filesystem::path(stem + ".hex")
-                                          : (inPath.parent_path() / (stem + ".hex")))
+          ? (inPath.parent_path().empty()
+                 ? std::filesystem::path(stem + defaultExt)
+                 : (inPath.parent_path() / (stem + defaultExt)))
           : std::filesystem::path(opts.outputFile);
 
   std::filesystem::path hexPath = outPath;
   std::filesystem::path elfPath = outPath;
   if (outPath.extension() == ".elf") {
-    hexPath.replace_extension(".hex");
+    hexPath.replace_extension(defaultExt);
   } else {
     elfPath.replace_extension(".elf");
   }
@@ -820,13 +1565,37 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
     std::filesystem::create_directories(outPath.parent_path(), ec);
   }
 
-  // 1. Locate AVR toolchain tools.
-  const std::string avrGcc = findAvrTool("avr-gcc", strideRoot);
-  const std::string avrObjcopy = findAvrTool("avr-objcopy", strideRoot);
-  const std::string avrSize = findAvrTool("avr-size", strideRoot);
-  if (avrGcc.empty() || avrObjcopy.empty()) {
-    err << "stride: error: avr-gcc / avr-objcopy not found in PATH or Arduino15 tools\n";
-    return false;
+  // 1. Locate toolchain tools (AVR).
+  std::string avrGcc;
+  std::string avrObjcopy;
+  std::string avrSize;
+  if (isAvr) {
+    avrGcc = findAvrTool("avr-gcc", strideRoot);
+    avrObjcopy = findAvrTool("avr-objcopy", strideRoot);
+    avrSize = findAvrTool("avr-size", strideRoot);
+    if (avrGcc.empty() || avrObjcopy.empty()) {
+      const std::string arduinoCli = findInPath("arduino-cli");
+      if (!opts.noPrompt && isInteractiveTerminal() && !arduinoCli.empty()) {
+        out << "AVR toolchain (avr-gcc / avr-objcopy) not found.\n"
+            << "Install Arduino AVR core via 'arduino-cli core install arduino:avr'? [Y/n] "
+            << std::flush;
+        std::string reply;
+        std::getline(std::cin, reply);
+        if (reply.empty() || reply[0] == 'y' || reply[0] == 'Y') {
+          if (runSubprocess(arduinoCli, {"core", "install", "arduino:avr"},
+                            opts.verbose, out) == 0) {
+            avrGcc = findAvrTool("avr-gcc", strideRoot);
+            avrObjcopy = findAvrTool("avr-objcopy", strideRoot);
+            avrSize = findAvrTool("avr-size", strideRoot);
+          }
+        }
+      }
+      if (avrGcc.empty() || avrObjcopy.empty()) {
+        err << "stride: error: avr-gcc / avr-objcopy not found in PATH or Arduino15 tools "
+            << "(install via 'arduino-cli core install arduino:avr' or Arduino IDE)\n";
+      }
+      return false;
+    }
   }
 
   // 2. Compile Stride source to AVR object file.
@@ -859,6 +1628,9 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
     env.setStrict(opts.strict);
     env.setCacheLine(static_cast<unsigned>(
         std::max<int64_t>(hw->intProperty("cacheLine").value_or(0), 0)));
+    if (!opts.systemOverride.empty()) {
+      env.setSystemOverride(opts.systemOverride);
+    }
     if (!opts.boardOverride.empty()) {
       env.setBoardOverride(opts.boardOverride);
     }
@@ -889,9 +1661,14 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
       }
     }
     if (!env.emitObjectFile(progObj.string(), triple, cpu, "", "static", "")) {
-      err << "stride: error: failed to emit AVR object file\n";
+      err << "stride: error: failed to emit object file\n";
       return false;
     }
+  }
+
+  if (hasCmakeRuntime) {
+    return buildAndUploadPicoFirmware(opts, spec, *hw, strideRoot, workDir,
+                                      progObj, outPath, elfPath, out, err);
   }
 
   // 3. Generate stride_board.h and compile C runtime.
@@ -1036,10 +1813,15 @@ void printBoardBuildHelp(std::ostream &os, bool upload) {
      << (upload ? "Build board firmware and upload it to a connected board.\n\n"
                 : "Build board firmware (.hex and .elf). 'stride flash' also uploads it.\n\n")
      << "Options:\n"
-     << "  -o <file.hex|file.elf>   Output firmware file (default: <input>.hex)\n"
+     << "  -o <file.hex|file.elf|file.uf2>\n"
+     << "                           Output firmware file (default: <input>.hex or .uf2)\n"
+     << "  --system=<name>          Override target platform/system (alias: --platformOverride)\n"
      << "  --boardOverride=<name>   Override target board from 'use <System> on <Board>'\n";
   if (upload) {
-    os << "  --port=<port>, -P <port> Serial port for upload (auto-detected if omitted)\n";
+    os << "  --port=<port>, -P <port> Serial port for upload (auto-detected if omitted)\n"
+       << "  --probe                  Flash via SWD debug probe (OpenOCD)\n"
+       << "  --upload-method=<m>      Upload method: picotool, swd, or auto\n"
+       << "  --no-prompt              Do not prompt interactively for BOOTSEL or downloads\n";
   }
   os << "  --build-dir=<dir>        Directory for intermediate artifacts\n"
      << "  -O0, -O1, -O2, -O3, -Os, -Oz\n"
@@ -1085,6 +1867,8 @@ int runBoardBuild(const std::vector<std::string> &args,
       printBoardBuildHelp(out, upload);
       return 0;
     } else if (nextVal("-o", opts.outputFile)) {
+    } else if (nextVal("--system", opts.systemOverride) ||
+               nextVal("--platformOverride", opts.systemOverride)) {
     } else if (nextVal("--boardOverride", opts.boardOverride)) {
     } else if (nextVal("--port", port) || nextVal("-P", port)) {
       if (!upload) {
@@ -1093,6 +1877,19 @@ int runBoardBuild(const std::vector<std::string> &args,
         return 1;
       }
       opts.serialPort = port;
+    } else if (arg == "--probe") {
+      if (!upload) {
+        err << "stride: error: '--probe' only applies to uploading; use 'stride flash'\n";
+        return 1;
+      }
+      opts.uploadMethod = "swd";
+    } else if (nextVal("--upload-method", opts.uploadMethod)) {
+      if (!upload) {
+        err << "stride: error: '--upload-method' only applies to uploading; use 'stride flash'\n";
+        return 1;
+      }
+    } else if (arg == "--no-prompt") {
+      opts.noPrompt = true;
     } else if (nextVal("--build-dir", opts.buildDir)) {
     } else if (nextVal("--strideroot", opts.strideRoot)) {
     } else if (arg == "--upload" || arg == "--flash") {

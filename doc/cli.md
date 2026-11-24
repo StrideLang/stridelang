@@ -47,9 +47,13 @@ The board is looked up next to the program first, so a project can keep its wiri
 
 | Option | Description |
 | :--- | :--- |
-| `-o <file.hex\|file.elf>` | Output firmware path (default: `<input>.hex`). Both `.elf` and `.hex` are produced alongside one another. |
+| `-o <file.hex\|file.elf\|file.uf2>` | Output firmware path (default: `<input>.hex` for AVR, `<input>.uf2` for Pico). |
+| `--system=<name>`, `--platformOverride=<name>` | Override the target platform/system declared in `use <System> on <Board>` (e.g. `AVR` → `Pico`). |
 | `--boardOverride=<name>`, `--boardOverride <name>` | Override the board declared in `use <System> on <Board>` (or supply a board when none is specified in the file). |
 | `--port=<port>`, `--port <port>`, `-P <port>` | `stride flash` only. Serial port for upload (e.g. `COM3`, `/dev/ttyACM0`). Auto-detected from the board's `usb` VID:PID list if omitted. |
+| `--probe` | `stride flash` only. Flash via SWD debug probe using OpenOCD (auto-downloads OpenOCD into `~/.stride/tools/openocd` if missing). |
+| `--upload-method=<picotool\|swd\|auto>` | `stride flash` only. Select upload method (`picotool` USB, `swd` OpenOCD, or `auto`). |
+| `--no-prompt` | Disable interactive prompts (e.g. BOOTSEL preparation or OpenOCD download confirmation). |
 | `--strict` | Make a String write that can be cut off an error. |
 | `--build-dir=<dir>`, `--build-dir <dir>` | Directory for intermediate artifacts (`<stem>.o`, `stride_board.h`, runtime `.o`). Defaults to `<outDir>/<stem>_build`. |
 | `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, `-Oz` | Optimization level passed to LLVM (`-Os` / `-Oz` map to level `2`; default: `2`). |
@@ -136,7 +140,8 @@ Any `--flag=<val>` option that takes a value also accepts `--flag <val>`.
 
 ## Caching & Environment Notes
 
-* **Cache isolation for overrides & cross-targets**: AST and object cache tags incorporate `--boardOverride`, `--target`, and `-mcpu`, so overriding a board on the command line never reads or overwrites cached artifacts for the board named inside the `.stride` file.
+* **Cache isolation for overrides & cross-targets**: AST and object cache tags incorporate `--system`, `--boardOverride`, `--target`, and `-mcpu`, so overriding a platform or board on the command line never reads or overwrites cached artifacts for the target named inside the `.stride` file.
+* **Porting across platforms**: `stride build` and `stride flash` evaluate `@with(...)` conditions on `use` and `import` before selecting the target platform/board (via `-D`), and also support `--system` + `--boardOverride` to retarget a portable program without modifying source files.
 * **`STRIDEROOT` & `STRIDE_DEV`**: Set `STRIDEROOT` to point to a custom standard library / platform root, or `STRIDE_DEV=1` when running from a source build to prefer the adjacent development `strideroot` checkout (see [Developer Workflow Guide](developer_workflow.md)).
 
 ---
