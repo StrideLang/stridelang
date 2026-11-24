@@ -827,3 +827,69 @@ TEST_F(StridecDriverTest, UnifiedBuildAndRunDesktopTarget) {
 
   std::filesystem::remove_all(tempDir, ec);
 }
+
+TEST_F(StridecDriverTest, ProbeAndUploadMethodCliOptions) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  EXPECT_EQ(strd::runUnifiedCommand({"--help"}, strideRoot, "flash", out, err), 0);
+  EXPECT_NE(out.str().find("--probe"), std::string::npos);
+  EXPECT_NE(out.str().find("--upload-method"), std::string::npos);
+  EXPECT_NE(out.str().find("--probe-interface"), std::string::npos);
+
+  out.str("");
+  err.str("");
+  EXPECT_EQ(strd::runUnifiedCommand({"x.stride", "--probe"}, strideRoot, "build", out, err), 1);
+  EXPECT_NE(err.str().find("use 'stride flash'"), std::string::npos);
+
+  out.str("");
+  err.str("");
+  EXPECT_EQ(strd::runUnifiedCommand({"x.stride", "--upload-method=openocd"}, strideRoot, "build", out, err), 1);
+  EXPECT_NE(err.str().find("use 'stride flash'"), std::string::npos);
+
+  out.str("");
+  err.str("");
+  EXPECT_EQ(strd::runUnifiedCommand({"x.stride", "--probe-interface=interface/jlink.cfg"}, strideRoot, "build", out, err), 1);
+  EXPECT_NE(err.str().find("use 'stride flash'"), std::string::npos);
+}
+
+TEST_F(StridecDriverTest, PicoUploadMethodResolution) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  std::error_code ec;
+  std::filesystem::path tempDir =
+      std::filesystem::temp_directory_path(ec) / "stride_pico_upload_test";
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
+  std::filesystem::path picoFile = tempDir / "pico_prog.stride";
+  {
+    std::ofstream f(picoFile);
+    f << "use Pico version 1.0 on RaspberryPiPico\n"
+      << "signal X { type: Real domain: PicoTickDomain }\n";
+  }
+
+  strd::BoardBuildOptions opts;
+  opts.inputFile = picoFile.string();
+  opts.strideRoot = strideRoot;
+
+  strd::TargetDescriptor desc;
+  std::string errMsg;
+  ASSERT_TRUE(strd::inspectTargetDescriptor(opts, desc, errMsg)) << errMsg;
+  EXPECT_EQ(desc.board, "RaspberryPiPico");
+  EXPECT_EQ(desc.flashRunner, "picotool");
+  EXPECT_EQ(desc.chip, "RP2040");
+
+  opts.useProbe = true;
+  desc = {};
+  ASSERT_TRUE(strd::inspectTargetDescriptor(opts, desc, errMsg)) << errMsg;
+  EXPECT_EQ(desc.flashRunner, "openocd");
+  EXPECT_EQ(desc.debugAdapter, "cortex-debug");
+
+  opts.useProbe = false;
+  opts.uploadMethod = "probe-rs";
+  desc = {};
+  ASSERT_TRUE(strd::inspectTargetDescriptor(opts, desc, errMsg)) << errMsg;
+  EXPECT_EQ(desc.flashRunner, "probe-rs");
+  EXPECT_EQ(desc.monitorType, "rtt");
+  EXPECT_EQ(desc.debugAdapter, "probe-rs");
+  EXPECT_EQ(desc.chip, "RP2040");
+
+  std::filesystem::remove_all(tempDir, ec);
+}

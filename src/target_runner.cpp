@@ -284,9 +284,15 @@ void printUnifiedHelp(std::ostream &os, const std::string &mode) {
      << "  -o <file>                Output artifact path\n"
      << "  --boardOverride=<name>   Override target board from 'use <System> "
         "on <Board>'\n";
-  if (mode == "run") {
+  if (mode == "run" || mode == "flash") {
     os << "  --port=<port>, -P <port> Serial port for board upload/monitor "
-          "(auto-detected if omitted)\n";
+          "(auto-detected if omitted)\n"
+       << "  --probe                  Flash using the board's debug probe "
+          "(e.g. OpenOCD/SWD)\n"
+       << "  --upload-method=<name>   Override board upload method "
+          "(picotool, openocd, probe-rs, ...)\n"
+       << "  --probe-interface=<cfg>  Override OpenOCD probe interface config "
+          "(implies --probe)\n";
   }
   os << "  --build-dir=<dir>        Directory for intermediate artifacts\n"
      << "  -O0, -O1, -O2, -O3, -Os, -Oz\n"
@@ -331,6 +337,8 @@ bool parseUnifiedOptions(const std::vector<std::string> &args,
     };
 
     std::string port;
+    std::string uploadMethodOverride;
+    std::string probeInterfaceOverride;
     if (arg == "-h" || arg == "--help") {
       showHelp = true;
       return true;
@@ -344,6 +352,30 @@ bool parseUnifiedOptions(const std::vector<std::string> &args,
         return false;
       }
       opts.serialPort = port;
+    } else if (arg == "--probe") {
+      if (mode == "build") {
+        err << "stride: error: '--probe' only applies to uploading; use 'stride "
+               "flash' or 'stride run'\n";
+        return false;
+      }
+      opts.useProbe = true;
+    } else if (nextVal("--upload-method", uploadMethodOverride)) {
+      if (mode == "build") {
+        err << "stride: error: '" << arg
+            << "' only applies to uploading; use 'stride flash' or 'stride "
+               "run'\n";
+        return false;
+      }
+      opts.uploadMethod = uploadMethodOverride;
+    } else if (nextVal("--probe-interface", probeInterfaceOverride)) {
+      if (mode == "build") {
+        err << "stride: error: '" << arg
+            << "' only applies to uploading; use 'stride flash' or 'stride "
+               "run'\n";
+        return false;
+      }
+      opts.probeInterface = probeInterfaceOverride;
+      opts.useProbe = true;
     } else if (nextVal("--build-dir", opts.buildDir)) {
     } else if (nextVal("--strideroot", opts.strideRoot)) {
     } else if (arg == "--upload" || arg == "--flash") {
@@ -533,6 +565,96 @@ std::vector<SerialDeviceInfo> enumerateSerialDevices() {
   return devices;
 }
 
+static std::shared_ptr<DeclarationNode>
+uploadMethodBlock(const ResolvedHardware &hw, const std::string &methodBlock) {
+  auto node = hw.blockValue("upload", methodBlock);
+  if (node && node->getNodeType() == AST::Declaration) {
+    return std::static_pointer_cast<DeclarationNode>(node);
+  }
+  return nullptr;
+}
+
+static std::string uploadMethodString(const ResolvedHardware &hw,
+                                      const std::string &methodBlock,
+                                      const std::string &key,
+                                      const std::string &flatFallbackKey,
+                                      const std::string &defaultValue = "") {
+  if (auto sub = uploadMethodBlock(hw, methodBlock)) {
+    if (auto val = sub->getPropertyValue(key)) {
+      std::string text = HardwareResolver::valueText(val);
+      if (!text.empty()) {
+        return text;
+      }
+    }
+  }
+  std::string direct = hw.blockString("upload", key, "");
+  if (!direct.empty()) {
+    return direct;
+  }
+  if (!flatFallbackKey.empty()) {
+    std::string alt = hw.blockString("upload", flatFallbackKey, "");
+    if (!alt.empty()) {
+      return alt;
+    }
+  }
+  return defaultValue;
+}
+
+static std::optional<int64_t>
+uploadMethodInt(const ResolvedHardware &hw, const std::string &methodBlock,
+                const std::string &key, const std::string &flatFallbackKey) {
+  auto parseInt = [](const ASTNode &val) -> std::optional<int64_t> {
+    if (!val) {
+      return std::nullopt;
+    }
+    if (val->getNodeType() == AST::Int) {
+      return std::static_pointer_cast<ValueNode>(val)->getIntValue();
+    }
+    return std::nullopt;
+  };
+  if (auto sub = uploadMethodBlock(hw, methodBlock)) {
+    if (auto val = parseInt(sub->getPropertyValue(key))) {
+      return val;
+    }
+  }
+  if (auto val = hw.blockInt("upload", key)) {
+    return val;
+  }
+  if (!flatFallbackKey.empty()) {
+    if (auto val = hw.blockInt("upload", flatFallbackKey)) {
+      return val;
+    }
+  }
+  return std::nullopt;
+}
+
+static std::string resolveUploadMethod(const ResolvedHardware &hw,
+                                       const BoardBuildOptions &opts) {
+  if (!opts.uploadMethod.empty()) {
+    return toLowerCopy(opts.uploadMethod);
+  }
+  if (opts.useProbe) {
+    std::string probeMethod = hw.blockString("upload", "probe", "");
+    if (!probeMethod.empty()) {
+      return toLowerCopy(probeMethod);
+    }
+    if (uploadMethodBlock(hw, "openocd") ||
+        !hw.blockString("upload", "openocdInterface", "").empty() ||
+        !hw.blockString("upload", "interface", "").empty()) {
+      return "openocd";
+    }
+    if (uploadMethodBlock(hw, "probeRs")) {
+      return "probe-rs";
+    }
+    return "openocd";
+  }
+  std::string def = hw.blockString("upload", "method", "");
+  if (def.empty()) {
+    def = hw.blockString("upload", "default", "avrdude");
+  }
+  return toLowerCopy(def);
+}
+
 bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
                               const std::string &cpu,
                               const BoardBuildOptions &opts,
@@ -542,8 +664,7 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
   const std::string strideRoot =
       opts.strideRoot.empty() ? ASTFunctions::getDefaultStrideRoot()
                               : opts.strideRoot;
-  const std::string method =
-      toLowerCopy(hw.blockString("upload", "method", "avrdude"));
+  const std::string method = resolveUploadMethod(hw, opts);
 
   if (method == "none") {
     out << "Upload method is 'none'; skipping upload for " << hw.name() << "\n";
@@ -575,8 +696,9 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       return false;
     }
     const std::string programmer =
-        hw.blockString("upload", "programmer", "arduino");
-    const int64_t baud = hw.blockInt("upload", "baud").value_or(115200);
+        uploadMethodString(hw, "avrdude", "programmer", "", "arduino");
+    const int64_t baud =
+        uploadMethodInt(hw, "avrdude", "baud", "").value_or(115200);
 
     std::vector<std::string> uploadArgs;
     std::filesystem::path confPath =
@@ -618,7 +740,8 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
     if (!resolvePort(port)) {
       return false;
     }
-    const std::string fqbn = hw.blockString("upload", "fqbn", "");
+    const std::string fqbn =
+        uploadMethodString(hw, "arduinoCli", "fqbn", "", "");
     std::vector<std::string> uploadArgs = {"upload", "-p", port, "--input-file",
                                            hexPath.string()};
     if (!fqbn.empty()) {
@@ -642,15 +765,40 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       return false;
     }
     std::vector<std::string> uploadArgs;
-    const std::string iface = hw.blockString("upload", "interface", "");
-    const std::string target = hw.blockString("upload", "target", "");
-    if (!iface.empty()) {
+    const std::string boardCfg =
+        uploadMethodString(hw, "openocd", "boardCfg", "openocdBoard", "");
+    const std::string iface =
+        !opts.probeInterface.empty()
+            ? opts.probeInterface
+            : uploadMethodString(hw, "openocd", "interface",
+                                 "openocdInterface", "");
+    const std::string target =
+        uploadMethodString(hw, "openocd", "target", "openocdTarget", "");
+    const std::string transport =
+        uploadMethodString(hw, "openocd", "transport", "openocdTransport", "");
+    const std::optional<int64_t> speed =
+        uploadMethodInt(hw, "openocd", "speed", "openocdSpeed");
+
+    if (!boardCfg.empty() && opts.probeInterface.empty()) {
       uploadArgs.push_back("-f");
-      uploadArgs.push_back(iface);
+      uploadArgs.push_back(boardCfg);
+    } else {
+      if (!iface.empty()) {
+        uploadArgs.push_back("-f");
+        uploadArgs.push_back(iface);
+      }
+      if (!transport.empty()) {
+        uploadArgs.push_back("-c");
+        uploadArgs.push_back("transport select " + transport);
+      }
+      if (!target.empty()) {
+        uploadArgs.push_back("-f");
+        uploadArgs.push_back(target);
+      }
     }
-    if (!target.empty()) {
-      uploadArgs.push_back("-f");
-      uploadArgs.push_back(target);
+    if (speed.has_value()) {
+      uploadArgs.push_back("-c");
+      uploadArgs.push_back("adapter speed " + std::to_string(*speed));
     }
     uploadArgs.push_back("-c");
     uploadArgs.push_back("program " + elfPath.generic_string() +
@@ -671,7 +819,8 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       err << "stride: error: probe-rs not found in PATH\n";
       return false;
     }
-    const std::string chip = hw.blockString("upload", "chip", cpu);
+    const std::string chip =
+        uploadMethodString(hw, "probeRs", "chip", "", cpu);
     std::vector<std::string> uploadArgs = {"download", "--chip", chip,
                                            elfPath.string()};
     if (runRunnerSubprocess(probeRs, uploadArgs, opts.verbose, out) != 0) {
@@ -758,9 +907,9 @@ bool inspectTargetDescriptor(const BoardBuildOptions &opts,
     outDesc.cpu = hw->stringProperty("cpu");
     outDesc.artifact = elfPath.generic_string();
     outDesc.hex = hexPath.generic_string();
-    outDesc.flashRunner =
-        toLowerCopy(hw->blockString("upload", "method", "avrdude"));
-    outDesc.baud = hw->blockInt("upload", "baud").value_or(115200);
+    outDesc.flashRunner = resolveUploadMethod(*hw, opts);
+    outDesc.baud =
+        uploadMethodInt(*hw, "avrdude", "baud", "").value_or(115200);
     if (!opts.serialPort.empty()) {
       outDesc.port = opts.serialPort;
     } else {
@@ -769,7 +918,8 @@ bool inspectTargetDescriptor(const BoardBuildOptions &opts,
     }
     outDesc.monitorType =
         (outDesc.flashRunner == "probe-rs") ? "rtt" : "serial";
-    outDesc.chip = hw->blockString("upload", "chip", outDesc.cpu);
+    outDesc.chip =
+        uploadMethodString(*hw, "probeRs", "chip", "", outDesc.cpu);
     outDesc.svd = hw->blockString("debug", "svd", "");
     std::string explicitAdapter = hw->blockString("debug", "adapter", "");
     if (!explicitAdapter.empty()) {

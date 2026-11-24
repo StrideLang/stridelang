@@ -1039,7 +1039,10 @@ void printBoardBuildHelp(std::ostream &os, bool upload) {
      << "  -o <file.hex|file.elf>   Output firmware file (default: <input>.hex)\n"
      << "  --boardOverride=<name>   Override target board from 'use <System> on <Board>'\n";
   if (upload) {
-    os << "  --port=<port>, -P <port> Serial port for upload (auto-detected if omitted)\n";
+    os << "  --port=<port>, -P <port> Serial port for upload (auto-detected if omitted)\n"
+       << "  --probe                  Flash using the board's debug probe (e.g. OpenOCD/SWD)\n"
+       << "  --upload-method=<name>   Override board upload method (picotool, openocd, probe-rs, ...)\n"
+       << "  --probe-interface=<cfg>  Override OpenOCD probe interface config (implies --probe)\n";
   }
   os << "  --build-dir=<dir>        Directory for intermediate artifacts\n"
      << "  -O0, -O1, -O2, -O3, -Os, -Oz\n"
@@ -1081,6 +1084,8 @@ int runBoardBuild(const std::vector<std::string> &args,
       return false;
     };
     std::string port;
+    std::string uploadMethodOverride;
+    std::string probeInterfaceOverride;
     if (arg == "-h" || arg == "--help") {
       printBoardBuildHelp(out, upload);
       return 0;
@@ -1093,6 +1098,25 @@ int runBoardBuild(const std::vector<std::string> &args,
         return 1;
       }
       opts.serialPort = port;
+    } else if (arg == "--probe") {
+      if (!upload) {
+        err << "stride: error: '--probe' only applies to uploading; use 'stride flash'\n";
+        return 1;
+      }
+      opts.useProbe = true;
+    } else if (nextVal("--upload-method", uploadMethodOverride)) {
+      if (!upload) {
+        err << "stride: error: '" << arg << "' only applies to uploading; use 'stride flash'\n";
+        return 1;
+      }
+      opts.uploadMethod = uploadMethodOverride;
+    } else if (nextVal("--probe-interface", probeInterfaceOverride)) {
+      if (!upload) {
+        err << "stride: error: '" << arg << "' only applies to uploading; use 'stride flash'\n";
+        return 1;
+      }
+      opts.probeInterface = probeInterfaceOverride;
+      opts.useProbe = true;
     } else if (nextVal("--build-dir", opts.buildDir)) {
     } else if (nextVal("--strideroot", opts.strideRoot)) {
     } else if (arg == "--upload" || arg == "--flash") {

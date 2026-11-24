@@ -30,6 +30,9 @@ struct BoardBuildOptions {
   std::vector<std::string> disabledFeatures;
   bool noDefaultFeatures = false;
   std::string serialPort;
+  std::string uploadMethod;   // optional override ("picotool", "openocd", "probe-rs", ...)
+  std::string probeInterface; // optional OpenOCD interface override (e.g. "interface/cmsis-dap.cfg")
+  bool useProbe = false;      // true when --probe is passed
   bool upload = false;
   bool verbose = false;
   bool strict = false;
