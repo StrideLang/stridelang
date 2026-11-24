@@ -537,6 +537,11 @@ std::string generateBoardHeader(const ResolvedHardware &hw,
     for (const auto &domDecl : isrDomains) {
       std::string domName = domDecl->getName();
       std::string isrVec;
+      if (auto vp = domDecl->getCompilerProperty("isrVector")) {
+        if (vp->getNodeType() == AST::String) {
+          isrVec = std::static_pointer_cast<ValueNode>(vp)->getStringValue();
+        }
+      }
       if (auto reqProp = domDecl->getPropertyValue("requiresResources")) {
         if (reqProp->getNodeType() == AST::List) {
           for (const auto &item : reqProp->getChildren()) {
@@ -1270,6 +1275,171 @@ bool buildAndUploadPicoFirmware(const BoardBuildOptions &opts,
   return true;
 }
 
+bool buildAndUploadStm32F7Firmware(const BoardBuildOptions &opts,
+                                   const BoardSpec &spec,
+                                   const ResolvedHardware &hw,
+                                   const std::string &strideRoot,
+                                   const std::filesystem::path &workDir,
+                                   const std::filesystem::path &progObj,
+                                   const std::filesystem::path &outPath,
+                                   const std::filesystem::path &elfPath,
+                                   const std::filesystem::path &hexPath,
+                                   std::ostream &out, std::ostream &err) {
+  auto findArmTool = [&](const std::string &toolName,
+                         const std::string &subDir,
+                         const std::string &tmTool) -> std::string {
+    if (auto p = findTool(toolName, tmTool, strideRoot); !p.empty()) {
+      return p;
+    }
+    std::filesystem::path vsCodeRoot;
+    if (!findPicoVsCodeSdk(vsCodeRoot).empty() && !subDir.empty()) {
+      if (auto p = findPicoVsCodeTool(vsCodeRoot, subDir, toolName);
+          !p.empty()) {
+        return p;
+      }
+    }
+    return {};
+  };
+
+  const std::string cmakeExe = findArmTool("cmake", "CMake", "CMake");
+  if (cmakeExe.empty()) {
+    err << "stride: error: cmake not found in PATH or ToolManager\n";
+    return false;
+  }
+  const std::string ninjaExe = findArmTool("ninja", "ninja", "ninja");
+  const std::string armGcc =
+      findArmTool("arm-none-eabi-gcc", "toolchain", "ArmCrosscompiler");
+  const std::string armObjcopy =
+      findArmTool("arm-none-eabi-objcopy", "toolchain", "ArmCrosscompiler");
+  if (armGcc.empty() || armObjcopy.empty()) {
+    err << "stride: error: arm-none-eabi-gcc / arm-none-eabi-objcopy not found "
+           "in PATH or ToolManager\n";
+    return false;
+  }
+
+  const std::filesystem::path runtimeDir =
+      std::filesystem::path(strideRoot) / "frameworks" / spec.frameworkName /
+      spec.frameworkVersion / "runtime";
+  if (!std::filesystem::exists(runtimeDir / "CMakeLists.txt")) {
+    err << "stride: error: STM32F7 runtime CMakeLists.txt not found: "
+        << (runtimeDir / "CMakeLists.txt").string() << "\n";
+    return false;
+  }
+
+  std::filesystem::path rtDir;
+  std::filesystem::path stringSrc;
+  if (!prepareStringRuntimeSources(workDir, rtDir, stringSrc, err)) {
+    return false;
+  }
+
+  int64_t flashKb = 2048;
+  int64_t ramKb = 512;
+  if (auto memProp = hw.property("memory");
+      memProp && memProp->getNodeType() == AST::Declaration) {
+    auto memDecl = std::static_pointer_cast<DeclarationNode>(memProp);
+    if (auto f = memDecl->getPropertyValue("flash");
+        f && f->getNodeType() == AST::Int) {
+      flashKb = std::static_pointer_cast<ValueNode>(f)->getIntValue() / 1024;
+    }
+    if (auto r = memDecl->getPropertyValue("ram");
+        r && r->getNodeType() == AST::Int) {
+      ramKb = std::static_pointer_cast<ValueNode>(r)->getIntValue() / 1024;
+    }
+  }
+
+  const std::string ccFlags = hw.stringProperty("compilerFlags");
+  const std::string fpu =
+      (ccFlags.find("fpv5-sp-d16") != std::string::npos) ? "fpv5-sp-d16"
+                                                          : "fpv5-d16";
+  const std::string boardOrOverlay =
+      hw.name() + " " + hw.stringProperty("overlays");
+  const std::string uartInst =
+      (boardOrOverlay.find("STM32F746") != std::string::npos) ? "1" : "3";
+
+  const std::filesystem::path cmakeBuildDir = workDir / "stm32f7_cmake";
+  if (!ninjaExe.empty() &&
+      (std::filesystem::exists(cmakeBuildDir / "CMakeCache.txt") ||
+       std::filesystem::exists(cmakeBuildDir / "CMakeFiles"))) {
+    std::string cacheText;
+    if (std::ifstream cacheIn(cmakeBuildDir / "CMakeCache.txt"); cacheIn) {
+      cacheText.assign((std::istreambuf_iterator<char>(cacheIn)),
+                       std::istreambuf_iterator<char>());
+    }
+    if (cacheText.find("CMAKE_GENERATOR:INTERNAL=Ninja") == std::string::npos) {
+      std::error_code rmEc;
+      std::filesystem::remove_all(cmakeBuildDir, rmEc);
+    }
+  }
+  std::vector<std::string> configArgs = {
+      "-S", runtimeDir.string(),
+      "-B", cmakeBuildDir.string(),
+      "-DCMAKE_C_COMPILER=" + std::filesystem::path(armGcc).generic_string(),
+      "-DCMAKE_ASM_COMPILER=" + std::filesystem::path(armGcc).generic_string(),
+      "-DCMAKE_OBJCOPY=" + std::filesystem::path(armObjcopy).generic_string(),
+      "-DSTRIDE_STM32F7_FPU=" + fpu,
+      "-DSTRIDE_STM32F7_FLASH_KB=" + std::to_string(flashKb),
+      "-DSTRIDE_STM32F7_RAM_KB=" + std::to_string(ramKb),
+      "-DSTRIDE_STM32F7_UART=" + uartInst,
+      "-DSTRIDE_PROGRAM_OBJ=" + std::filesystem::absolute(progObj).string(),
+      "-DSTRIDE_STRING_RUNTIME=" + std::filesystem::absolute(stringSrc).string(),
+      "-DSTRIDE_JIT_INCLUDE_DIR=" +
+          std::filesystem::absolute(rtDir).generic_string()};
+  if (!ninjaExe.empty()) {
+    configArgs.push_back("-G");
+    configArgs.push_back("Ninja");
+    configArgs.push_back("-DCMAKE_MAKE_PROGRAM=" +
+                         std::filesystem::path(ninjaExe).generic_string());
+  }
+
+  if (runSubprocess(cmakeExe, configArgs, opts.verbose, out) != 0) {
+    err << "stride: error: STM32F7 CMake configure failed\n";
+    return false;
+  }
+  if (runSubprocess(cmakeExe, {"--build", cmakeBuildDir.string(), "--parallel"},
+                    opts.verbose, out) != 0) {
+    err << "stride: error: STM32F7 build failed\n";
+    return false;
+  }
+
+  const std::filesystem::path builtElf = cmakeBuildDir / "stride_firmware.elf";
+  const std::filesystem::path builtBin = cmakeBuildDir / "stride_firmware.bin";
+  const std::filesystem::path builtHex = cmakeBuildDir / "stride_firmware.hex";
+  if (!std::filesystem::exists(builtElf)) {
+    err << "stride: error: expected ELF not produced: " << builtElf.string()
+        << "\n";
+    return false;
+  }
+
+  std::error_code ec;
+  std::filesystem::copy_file(builtElf, elfPath,
+                             std::filesystem::copy_options::overwrite_existing,
+                             ec);
+  if (std::filesystem::exists(builtHex)) {
+    std::filesystem::copy_file(builtHex, hexPath,
+                               std::filesystem::copy_options::overwrite_existing,
+                               ec);
+  }
+  const std::filesystem::path primarySrc =
+      (outPath.extension() == ".hex" && std::filesystem::exists(builtHex))
+          ? builtHex
+          : ((outPath.extension() == ".bin" && std::filesystem::exists(builtBin))
+                 ? builtBin
+                 : builtElf);
+  if (primarySrc != elfPath && primarySrc != hexPath) {
+    std::filesystem::copy_file(
+        primarySrc, outPath, std::filesystem::copy_options::overwrite_existing,
+        ec);
+  }
+
+  out << "Built firmware: " << outPath.string() << "\n";
+
+  if (opts.upload) {
+    return uploadFirmwareWithRunner(hw, hw.stringProperty("cpu"), opts, elfPath,
+                                    hexPath, out, err);
+  }
+  return true;
+}
+
 std::string findAvrTool(const std::string &toolName,
                         const std::string &strideRoot) {
   // 1. PATH
@@ -1667,6 +1837,11 @@ bool buildBoardFirmware(const BoardBuildOptions &opts, std::ostream &out,
   }
 
   if (hasCmakeRuntime) {
+    if (spec.frameworkName == "STM32F7") {
+      return buildAndUploadStm32F7Firmware(opts, spec, *hw, strideRoot, workDir,
+                                            progObj, outPath, elfPath, hexPath,
+                                            out, err);
+    }
     return buildAndUploadPicoFirmware(opts, spec, *hw, strideRoot, workDir,
                                       progObj, outPath, elfPath, out, err);
   }
