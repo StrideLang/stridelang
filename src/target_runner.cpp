@@ -1,7 +1,7 @@
 #include "stridec/board_builder.hpp"
 
 #include "stride/parser/ast.h"
-#include "stride/stridegen/featureresolver.hpp"
+#include "stride/utils/featureresolver.h"
 #include "stride/stridegen/hardwareresolver.hpp"
 #include "stride/stridegen/toolmanager.hpp"
 #include "stride/stridejit/strideenvironment.hpp"
@@ -562,7 +562,7 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       opts.strideRoot.empty() ? ASTFunctions::getDefaultStrideRoot()
                               : opts.strideRoot;
   const std::string method =
-      toLowerCopy(hw.blockString("upload", "method", "avrdude"));
+      toLowerCopy(hw.recordString("upload", "method", "avrdude"));
 
   if (method == "none") {
     out << "Upload method is 'none'; skipping upload for " << hw.name() << "\n";
@@ -594,8 +594,8 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       return false;
     }
     const std::string programmer =
-        hw.blockString("upload", "programmer", "arduino");
-    const int64_t baud = hw.blockInt("upload", "baud").value_or(115200);
+        hw.recordString("upload", "programmer", "arduino");
+    const int64_t baud = hw.recordInt("upload", "baud").value_or(115200);
 
     std::vector<std::string> uploadArgs;
     std::filesystem::path confPath =
@@ -637,7 +637,7 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
     if (!resolvePort(port)) {
       return false;
     }
-    const std::string fqbn = hw.blockString("upload", "fqbn", "");
+    const std::string fqbn = hw.recordString("upload", "fqbn", "");
     std::vector<std::string> uploadArgs = {"upload", "-p", port, "--input-file",
                                            hexPath.string()};
     if (!fqbn.empty()) {
@@ -661,8 +661,8 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       return false;
     }
     std::vector<std::string> uploadArgs;
-    const std::string iface = hw.blockString("upload", "interface", "");
-    const std::string target = hw.blockString("upload", "target", "");
+    const std::string iface = hw.recordString("upload", "interface", "");
+    const std::string target = hw.recordString("upload", "target", "");
     if (!iface.empty()) {
       uploadArgs.push_back("-f");
       uploadArgs.push_back(iface);
@@ -690,7 +690,7 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       err << "stride: error: probe-rs not found in PATH\n";
       return false;
     }
-    const std::string chip = hw.blockString("upload", "chip", cpu);
+    const std::string chip = hw.recordString("upload", "chip", cpu);
     std::vector<std::string> uploadArgs = {"download", "--chip", chip,
                                            elfPath.string()};
     if (runRunnerSubprocess(probeRs, uploadArgs, opts.verbose, out) != 0) {
@@ -778,8 +778,8 @@ bool inspectTargetDescriptor(const BoardBuildOptions &opts,
     outDesc.artifact = elfPath.generic_string();
     outDesc.hex = hexPath.generic_string();
     outDesc.flashRunner =
-        toLowerCopy(hw->blockString("upload", "method", "avrdude"));
-    outDesc.baud = hw->blockInt("upload", "baud").value_or(115200);
+        toLowerCopy(hw->recordString("upload", "method", "avrdude"));
+    outDesc.baud = hw->recordInt("upload", "baud").value_or(115200);
     if (!opts.serialPort.empty()) {
       outDesc.port = opts.serialPort;
     } else {
@@ -788,9 +788,9 @@ bool inspectTargetDescriptor(const BoardBuildOptions &opts,
     }
     outDesc.monitorType =
         (outDesc.flashRunner == "probe-rs") ? "rtt" : "serial";
-    outDesc.chip = hw->blockString("upload", "chip", outDesc.cpu);
-    outDesc.svd = hw->blockString("debug", "svd", "");
-    std::string explicitAdapter = hw->blockString("debug", "adapter", "");
+    outDesc.chip = hw->recordString("upload", "chip", outDesc.cpu);
+    outDesc.svd = hw->recordString("debug", "svd", "");
+    std::string explicitAdapter = hw->recordString("debug", "adapter", "");
     if (!explicitAdapter.empty()) {
       outDesc.debugAdapter = explicitAdapter;
     } else if (outDesc.flashRunner == "probe-rs") {
