@@ -951,13 +951,21 @@ bool flashWithOpenOcd(const ResolvedHardware &hw,
                       const BoardBuildOptions &opts,
                       const std::string &strideRoot, std::ostream &out,
                       std::ostream &err) {
+  const std::string boardCfg = uploadSubBlockString(hw, "openocd", "boardCfg", hw.recordString("upload", "openocdBoard"));
   const std::string targetCfg = uploadSubBlockString(hw, "openocd", "target", hw.recordString("upload", "openocdTarget"));
-  if (targetCfg.empty()) {
+  if (boardCfg.empty() && targetCfg.empty()) {
     err << "stride: error: board '" << hw.name()
         << "' does not declare upload.openocdTarget for SWD flashing\n";
     return false;
   }
-  const std::string ifaceCfg = uploadSubBlockString(hw, "openocd", "interface", hw.recordString("upload", "openocdInterface", "interface/cmsis-dap.cfg"));
+  const std::string ifaceCfg =
+      !opts.probeInterface.empty()
+          ? opts.probeInterface
+          : uploadSubBlockString(
+                hw, "openocd", "interface",
+                hw.recordString("upload", "openocdInterface",
+                                "interface/cmsis-dap.cfg"));
+  const std::string transportCfg = uploadSubBlockString(hw, "openocd", "transport", hw.recordString("upload", "openocdTransport"));
   const int64_t speedKhz = uploadSubBlockInt(hw, "openocd", "speed").value_or(hw.recordInt("upload", "openocdSpeed").value_or(5000));
 
   const std::string openocdExe = ensureOpenOcd(hw, opts, strideRoot, out, err);
@@ -979,9 +987,25 @@ bool flashWithOpenOcd(const ResolvedHardware &hw,
         (openocdDir.parent_path() / "share" / "openocd" / "scripts")
             .generic_string());
   }
+  if (!boardCfg.empty() && opts.probeInterface.empty()) {
+    args.push_back("-f");
+    args.push_back(boardCfg);
+  } else {
+    if (!ifaceCfg.empty()) {
+      args.push_back("-f");
+      args.push_back(ifaceCfg);
+    }
+    if (!transportCfg.empty()) {
+      args.push_back("-c");
+      args.push_back("transport select " + transportCfg);
+    }
+    if (!targetCfg.empty()) {
+      args.push_back("-f");
+      args.push_back(targetCfg);
+    }
+  }
   args.insert(args.end(),
-              {"-f", ifaceCfg, "-f", targetCfg, "-c",
-               "adapter speed " + std::to_string(speedKhz), "-c",
+              {"-c", "adapter speed " + std::to_string(speedKhz), "-c",
                "program " + elfGeneric + " verify reset exit"});
 
   if (runSubprocess(openocdExe, args, opts.verbose, out) != 0) {
@@ -1148,10 +1172,14 @@ bool buildAndUploadPicoFirmware(const BoardBuildOptions &opts,
   }
 
   const std::string ninjaExe = findPicoBundleTool("ninja", "", "ninja");
-  const bool useSwd = (opts.uploadMethod == "swd");
-  const bool useAuto = (opts.uploadMethod == "auto");
+  const std::string methodLower = toLower(opts.uploadMethod);
+  const bool useProbeRs = (methodLower == "probe-rs");
+  const bool useSwd =
+      !useProbeRs &&
+      (opts.useProbe || methodLower == "swd" || methodLower == "openocd");
+  const bool useAuto = (methodLower == "auto");
   std::string picotoolExe = findPicoBundleTool("picotool", "Picotool", "picotool");
-  if (opts.upload && !useSwd) {
+  if (opts.upload && !useSwd && !useProbeRs) {
     picotoolExe = findPicoBundleTool("picotool", "Picotool", "picotool");
     if (picotoolExe.empty() && !useAuto) {
       err << "stride: error: picotool not found in PATH or ToolManager (or pass --probe for SWD)\n";
@@ -1265,6 +1293,10 @@ bool buildAndUploadPicoFirmware(const BoardBuildOptions &opts,
   out << "Built firmware: " << uf2Path.string() << "\n";
 
   if (opts.upload) {
+    if (useProbeRs) {
+      return uploadFirmwareWithRunner(hw, hw.stringProperty("cpu"), opts,
+                                      elfPath, elfPath, out, err);
+    }
     if (useSwd) {
       return flashWithOpenOcd(hw, elfPath, opts, strideRoot, out, err);
     }
@@ -1445,8 +1477,10 @@ bool buildAndUploadStm32F7Firmware(const BoardBuildOptions &opts,
 
   if (opts.upload) {
     const std::string method =
-        opts.uploadMethod.empty() ? hw.recordString("upload", "method", "openocd")
-                                  : toLower(opts.uploadMethod);
+        opts.uploadMethod.empty()
+            ? (opts.useProbe ? "openocd"
+                             : hw.recordString("upload", "method", "openocd"))
+            : toLower(opts.uploadMethod);
     if (method == "openocd" || method == "swd" || method == "auto") {
       return flashWithOpenOcd(hw, elfPath, opts, strideRoot, out, err);
     }
@@ -2010,8 +2044,9 @@ void printBoardBuildHelp(std::ostream &os, bool upload) {
      << "  --boardOverride=<name>   Override target board from 'use <System> on <Board>'\n";
   if (upload) {
     os << "  --port=<port>, -P <port> Serial port for upload (auto-detected if omitted)\n"
-       << "  --probe                  Flash via SWD debug probe (OpenOCD)\n"
-       << "  --upload-method=<m>      Upload method: picotool, swd, or auto\n"
+       << "  --probe                  Flash using the board's debug probe (e.g. OpenOCD/SWD)\n"
+       << "  --upload-method=<name>   Override board upload method (picotool, openocd, swd, probe-rs, auto, ...)\n"
+       << "  --probe-interface=<cfg>  Override OpenOCD probe interface config (implies --probe)\n"
        << "  --no-prompt              Do not prompt interactively for BOOTSEL or downloads\n";
   }
   os << "  --build-dir=<dir>        Directory for intermediate artifacts\n"
@@ -2054,6 +2089,8 @@ int runBoardBuild(const std::vector<std::string> &args,
       return false;
     };
     std::string port;
+    std::string uploadMethodOverride;
+    std::string probeInterfaceOverride;
     if (arg == "-h" || arg == "--help") {
       printBoardBuildHelp(out, upload);
       return 0;
@@ -2073,12 +2110,20 @@ int runBoardBuild(const std::vector<std::string> &args,
         err << "stride: error: '--probe' only applies to uploading; use 'stride flash'\n";
         return 1;
       }
-      opts.uploadMethod = "swd";
-    } else if (nextVal("--upload-method", opts.uploadMethod)) {
+      opts.useProbe = true;
+    } else if (nextVal("--upload-method", uploadMethodOverride)) {
       if (!upload) {
-        err << "stride: error: '--upload-method' only applies to uploading; use 'stride flash'\n";
+        err << "stride: error: '" << arg << "' only applies to uploading; use 'stride flash'\n";
         return 1;
       }
+      opts.uploadMethod = uploadMethodOverride;
+    } else if (nextVal("--probe-interface", probeInterfaceOverride)) {
+      if (!upload) {
+        err << "stride: error: '" << arg << "' only applies to uploading; use 'stride flash'\n";
+        return 1;
+      }
+      opts.probeInterface = probeInterfaceOverride;
+      opts.useProbe = true;
     } else if (arg == "--no-prompt") {
       opts.noPrompt = true;
     } else if (nextVal("--build-dir", opts.buildDir)) {
