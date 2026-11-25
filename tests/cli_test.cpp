@@ -617,13 +617,11 @@ TEST_F(StridecDriverTest, ExamplesBuild) {
       std::istringstream iss(list);
       std::string item;
       while (std::getline(iss, item, ',')) {
-        auto start = item.find_first_not_of(" 	
-");
+        auto start = item.find_first_not_of(" \t\r\n");
         if (start == std::string::npos) {
           continue;
         }
-        auto end = item.find_last_not_of(" 	
-");
+        auto end = item.find_last_not_of(" \t\r\n");
         std::string variant = item.substr(start, end - start + 1);
         strd::BoardBuildOptions inspectOpts;
         inspectOpts.inputFile = program.string();
@@ -651,13 +649,11 @@ TEST_F(StridecDriverTest, ExamplesBuild) {
     }
     build(program, name, {}, ".hex");
 
-    auto usePos = source.find("
-use ");
+    auto usePos = source.find("\nuse ");
     ASSERT_NE(usePos, std::string::npos) << name << " has no use line";
     auto onPos = source.find(" on ", usePos);
     ASSERT_NE(onPos, std::string::npos) << name << " has no use ... on <Board>";
-    auto lineEnd = source.find_first_of("
-", onPos);
+    auto lineEnd = source.find_first_of("\r\n", onPos);
     const std::string defaultRig = source.substr(onPos + 4, lineEnd - onPos - 4);
     for (const auto &file : std::filesystem::directory_iterator(projectDir)) {
       const std::string stem = file.path().stem().string();
@@ -673,10 +669,9 @@ use ");
       }
       std::string variant = source;
       variant.replace(onPos + 4, defaultRig.size(), stem);
-      auto importPos = variant.find("import " + defaultRig + "
-");
+      auto importPos = variant.find("import " + defaultRig + "\n");
       if (importPos == std::string::npos) {
-        importPos = variant.find("import " + defaultRig + "");
+        importPos = variant.find("import " + defaultRig + "\r");
       }
       ASSERT_NE(importPos, std::string::npos)
           << name << " does not import " << defaultRig;
