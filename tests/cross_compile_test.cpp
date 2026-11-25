@@ -9,7 +9,11 @@
 #include "llvm/Config/llvm-config.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
+#if LLVM_VERSION_MAJOR >= 16
 #include "llvm/TargetParser/Triple.h"
+#else
+#include "llvm/ADT/Triple.h"
+#endif
 
 namespace {
 

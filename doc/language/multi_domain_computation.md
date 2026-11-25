@@ -307,3 +307,20 @@ On AVR both standard domains are cooperative: `main()` runs every pending timer 
 ### 7.2 Sleep
 
 A domain declares how it sleeps with `sleepModule` (a platformModule taking a tick count) and `sleepRate` (ticks per second). `Sleep(domain: D)` calls `D`'s `sleepModule`. On AVR, `Sleep(domain: PlatformLoopDomain)` suspends only the loop: `main()` skips it until the time has passed and keeps running timer ticks meanwhile. A domain without `sleepModule` keeps counting ticks (a subdomain) or blocks.
+
+---
+
+## 8. Future Work
+
+### 8.1 Moving the AVR Cooperative Scheduler into Stride
+Currently, `main()` in `frameworks/AVR/1.0/runtime/stride_avr_runtime.c` hardcodes the cooperative schedule—draining `s_pendingTicks` for `AvrTickDomain_process()` first and then running one `AvrLoopDomain_process()` iteration—using `__attribute__((weak))` symbol checks to skip unused domains.
+
+Moving this scheduler into Stride requires:
+- **Stride-scheduled loop entry point:** Either `main()` performs hardware setup (`serial_start()`, `tick_start()`, `sei()`, `RootDomain_init/process`) and calls a generated `AvrScheduler_process()` inside `for (;;)`, or `RootDomain` generates the loop itself.
+- **Atomic tick-drain & sleep primitives:** `platformModule`s to atomically snapshot and clear `s_pendingTicks` under `cli()`/`SREG` and to query/update `s_avrTickSleepTicks` and `s_loopSleeping`/`s_loopWakeMillis` (or represent sleep state as Stride signals).
+- **Catch-up loop (`while (ticks--)`):** `preSubdomains`/`postSubdomains` currently invoke each child once per parent tick; preserving tick catch-up when a loop iteration exceeds 1 ms requires a Stride `loop`/multi-invocation construct around `AvrTickDomain` (or a small C/IR helper).
+- **Compile-time dead-domain elimination:** With `activeDomains` filtering in `StrideGenerator::compile`, the scheduler can list `[AvrTickDomain, AvrLoopDomain]` and omit unused domains at compile time.
+- **Performance trade-offs (ATmega328P @ 16 MHz, 2 KB SRAM):** Eliminating runtime weak-symbol null checks can save cycles and enable inlining, whereas cross-TU `platformModule` calls (without LTO) and Stride wrapper status/stack frames add a small overhead (~10–30 cycles / ~1–2 µs per loop iteration under `-Os` if kept tight).
+
+### 8.2 Static Jitter / WCET Analysis for Cooperative AVR Domains
+Because 8-bit AVR MCUs have no caches or branch predictors, instruction cycle counts are deterministic. Walking the CFG of `AvrLoopDomain_process()` and `AvrTickDomain_process()` in the AVR LLVM IR or machine code to compute best-case (BCET) and worst-case (WCET) cycle bounds—compared against the 1 ms tick budget (16,000 cycles at 16 MHz)—can provide a compile-time indicator of cooperative tick jitter and potential tick overruns.

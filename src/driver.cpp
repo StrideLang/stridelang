@@ -342,7 +342,11 @@ bool writeStaticArchive(const std::string &archivePath,
   llvm::Error err = llvm::writeArchive(
       archivePath,
       members,
+#if LLVM_VERSION_MAJOR >= 18
       llvm::SymtabWritingMode::NormalSymtab,
+#else
+      /*WriteSymtab=*/true,
+#endif
       llvm::object::Archive::K_GNU,
       /*Deterministic=*/true,
       /*Thin=*/false);
