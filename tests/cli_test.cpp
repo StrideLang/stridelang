@@ -7,6 +7,7 @@
 
 #include "stridec/driver.hpp"
 #include "stridec/board_builder.hpp"
+#include "stridec/stm32_board.hpp"
 #include "stride/stridegen/hardwareresolver.hpp"
 #include "stride/stridejit/strideenvironment.hpp"
 #include "stride/utils/astfunctions.h"
@@ -968,4 +969,217 @@ TEST_F(StridecDriverTest, PicoUploadMethodResolution) {
   EXPECT_EQ(desc.chip, "RP2040");
 
   std::filesystem::remove_all(tempDir, ec);
+}
+
+TEST_F(StridecDriverTest, STM32F4DiscoveryTargetAndCompile) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  strd::HardwareResolver resolver(strideRoot);
+  std::string errMsg;
+  auto f4 = resolver.resolve("STM32F4", "STM32F4Discovery", &errMsg);
+  ASSERT_TRUE(f4.has_value()) << errMsg;
+  EXPECT_EQ(f4->stringProperty("triple"), "thumbv7em-none-eabi");
+  EXPECT_EQ(f4->stringProperty("cpu"), "cortex-m4");
+  EXPECT_EQ(f4->intProperty("clock").value_or(0), 168000000);
+  EXPECT_EQ(f4->recordInt("memory", "flash").value_or(0), 1048576);
+  EXPECT_EQ(f4->recordInt("memory", "ram").value_or(0), 131072);
+  ASSERT_TRUE(f4->boardPin("LED").has_value());
+  EXPECT_EQ(f4->boardPin("LED")->port, "GPIOD");
+  EXPECT_EQ(f4->boardPin("LED")->bit, 12);
+  ASSERT_TRUE(f4->boardPin("LED_ORANGE").has_value());
+  EXPECT_EQ(f4->boardPin("LED_ORANGE")->bit, 13);
+  ASSERT_TRUE(f4->boardPin("LED_RED").has_value());
+  EXPECT_EQ(f4->boardPin("LED_RED")->bit, 14);
+  ASSERT_TRUE(f4->boardPin("LED_BLUE").has_value());
+  EXPECT_EQ(f4->boardPin("LED_BLUE")->bit, 15);
+  ASSERT_TRUE(f4->boardPin("BUTTON").has_value());
+  EXPECT_EQ(f4->boardPin("BUTTON")->port, "GPIOA");
+  EXPECT_EQ(f4->boardPin("BUTTON")->bit, 0);
+
+  std::error_code ec;
+  std::filesystem::path tempDir =
+      std::filesystem::temp_directory_path(ec) / "stride_stm32f4_disco_test";
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
+
+  std::filesystem::path rigFile = tempDir / "F4Rig.stride";
+  {
+    std::ofstream f(rigFile);
+    f << "package F4Rig\n"
+      << "import Gpio\n"
+      << "import STM32F4Discovery\n"
+      << "hardwareBoard F4Rig { overlays: STM32F4Discovery }\n"
+      << "gpioPin Button { pin: STM32F4Discovery::BUTTON mode: Gpio::PinInput pull: Gpio::PullNone activeLow: off }\n"
+      << "gpioPin Status { pin: STM32F4Discovery::LED mode: Gpio::PinOutput initial: off }\n"
+      << "gpioPin Relay  { pin: STM32F4Discovery::PD7 mode: Gpio::PinOutput outputType: Gpio::OutputOpenDrain activeLow: on initial: off }\n";
+  }
+
+  std::filesystem::path progFile = tempDir / "f4_blink.stride";
+  {
+    std::ofstream f(progFile);
+    f << "use STM32F4 version 1.0 on F4Rig\n"
+      << "import DigitalIO\n"
+      << "import Strings\n"
+      << "import F4Rig\n"
+      << "switch Blink { default: off domain: PlatformLoopDomain }\n"
+      << "signal Count { type: Int default: 0 domain: PlatformLoopDomain }\n"
+      << "string Line { maxSize: 24 domain: PlatformLoopDomain }\n"
+      << "Blink >> Not() >> Blink;\n"
+      << "Blink >> DigitalIO::Led(pin: F4Rig::Status);\n"
+      << "(Count + 1) >> Count;\n"
+      << "[ \"tick: {}\", Count ] >> Format() >> Line;\n"
+      << "Line >> PrintLn();\n"
+      << "0.5 >> Sleep(domain: PlatformLoopDomain);\n"
+      << "switch Pressed { default: off domain: PlatformTimerDomain }\n"
+      << "F4Rig::Button >> DigitalIO::DigitalIn() >> Pressed;\n"
+      << "Pressed >> DigitalIO::DigitalOut(pin: F4Rig::Relay);\n";
+  }
+
+  strd::BoardBuildOptions opts;
+  opts.inputFile = progFile.string();
+  opts.strideRoot = strideRoot;
+
+  strd::TargetDescriptor desc;
+  ASSERT_TRUE(strd::inspectTargetDescriptor(opts, desc, errMsg)) << errMsg;
+  EXPECT_EQ(desc.system, "STM32F4");
+  EXPECT_EQ(desc.board, "F4Rig");
+  EXPECT_EQ(desc.framework, "STM32");
+  EXPECT_EQ(desc.triple, "thumbv7em-none-eabi");
+  EXPECT_EQ(desc.cpu, "cortex-m4");
+  EXPECT_EQ(desc.flashRunner, "openocd");
+  EXPECT_EQ(desc.debugAdapter, "cortex-debug");
+  EXPECT_EQ(desc.chip, "STM32F407VGTx");
+
+  opts.uploadMethod = "probe-rs";
+  desc = {};
+  ASSERT_TRUE(strd::inspectTargetDescriptor(opts, desc, errMsg)) << errMsg;
+  EXPECT_EQ(desc.flashRunner, "probe-rs");
+  EXPECT_EQ(desc.monitorType, "rtt");
+  EXPECT_EQ(desc.debugAdapter, "probe-rs");
+  EXPECT_EQ(desc.chip, "STM32F407VGTx");
+
+  std::filesystem::path objFile = tempDir / "f4_blink.o";
+  out.str("");
+  err.str("");
+  EXPECT_EQ(strd::runStridec({"-c", progFile.string(), "-o", objFile.string(),
+                              "--strideroot=" + strideRoot},
+                             out, err),
+            0)
+      << err.str();
+  EXPECT_TRUE(std::filesystem::exists(objFile));
+  EXPECT_GT(std::filesystem::file_size(objFile), 0u);
+
+  std::filesystem::remove_all(tempDir, ec);
+}
+
+TEST_F(StridecDriverTest, Stm32BoardClocksAndConsoleFromData) {
+  std::string strideRoot = strd::ASTFunctions::getDefaultStrideRoot();
+  std::error_code ec;
+  std::filesystem::path dir =
+      std::filesystem::temp_directory_path(ec) / "stride_stm32_board_test";
+  std::filesystem::remove_all(dir, ec);
+  std::filesystem::create_directories(dir, ec);
+  auto board = [&](const std::string &name, const std::string &body) {
+    std::ofstream(dir / (name + ".stride"))
+        << "import STM32F4Discovery\nhardwareBoard " << name
+        << " { overlays: STM32F4Discovery " << body << " }\n";
+  };
+  board("FastF4", "clocks: { pllN: 400 }");
+  board("SlowApb", "clocks: { apb1Divider: 2 }");
+  board("HalfAhb", "clocks: { ahbDivider: 2 }");
+  board("HalfAhbClock", "clocks: { ahbDivider: 2 } clock: 84000000");
+  board("CrystalF4", "clocks: { source: \"hse\" pllM: 8 }");
+  board("NoSuchUart", "console: { peripheral: USART9 }");
+
+  strd::HardwareResolver resolver(strideRoot);
+  resolver.addSearchDirectory(dir.generic_string());
+  auto resolve = [&](const std::string &name, strd::Stm32Board &out,
+                     std::string &error) {
+    auto hw = resolver.resolve("STM32F4", name, &error);
+    EXPECT_TRUE(hw.has_value()) << error;
+    return hw && strd::resolveStm32Board(*hw, out, error);
+  };
+
+  // The family's default: 168 MHz from the 16 MHz HSI.
+  strd::Stm32Board f4;
+  std::string error;
+  ASSERT_TRUE(resolve("STM32F4Discovery", f4, error)) << error;
+  EXPECT_EQ(f4.cpu, "cortex-m4");
+  EXPECT_EQ(f4.fpu, "fpv4-sp-d16");
+  EXPECT_EQ(f4.flashBytes, 1048576);
+  EXPECT_FALSE(f4.clock.hse);
+  EXPECT_EQ(f4.clock.vcoInHz, 1000000);
+  EXPECT_EQ(f4.clock.vcoOutHz, 336000000);
+  EXPECT_EQ(f4.clock.sysclkHz, 168000000);
+  EXPECT_EQ(f4.clock.pclk1Hz, 42000000);
+  EXPECT_EQ(f4.clock.pclk2Hz, 84000000);
+  EXPECT_EQ(f4.clock.pllQHz, 48000000);
+  EXPECT_EQ(f4.clock.flashLatency, 5);
+  EXPECT_FALSE(f4.clock.overDrive);
+  ASSERT_TRUE(f4.console.present);
+  EXPECT_EQ(f4.console.base, 0x40004400);
+  EXPECT_TRUE(f4.console.usartV1);
+  EXPECT_EQ(f4.console.clockHz, 42000000);
+  EXPECT_EQ(f4.console.alternateFunction, 7);
+  EXPECT_EQ(f4.console.tx.portBase, 0x40020000);
+  EXPECT_EQ(f4.console.tx.bit, 2);
+  EXPECT_EQ(f4.console.rx.bit, 3);
+  auto f4hw = resolver.resolve("STM32F4", "STM32F4Discovery", &error);
+  ASSERT_TRUE(f4hw.has_value());
+  const std::string header = strd::stm32BoardHeader(*f4hw, f4);
+  EXPECT_NE(header.find("#define STRIDE_HCLK_HZ 168000000UL"), std::string::npos);
+  EXPECT_NE(header.find("#define STRIDE_FLASH_LATENCY 5"), std::string::npos);
+  EXPECT_NE(header.find("#define STRIDE_CONSOLE_BASE 0x40004400UL"), std::string::npos);
+  EXPECT_NE(header.find("#define STRIDE_CONSOLE_USART_V1 1"), std::string::npos);
+
+  // The F7 family needs over-drive at 216 MHz; the F746G-DISCO console is
+  // USART1 on APB2.
+  auto f7hw = resolver.resolve("STM32F7", "STM32F746GDiscovery", &error);
+  ASSERT_TRUE(f7hw.has_value()) << error;
+  strd::Stm32Board f7;
+  ASSERT_TRUE(strd::resolveStm32Board(*f7hw, f7, error)) << error;
+  EXPECT_EQ(f7.clock.hclkHz, 216000000);
+  EXPECT_EQ(f7.clock.flashLatency, 7);
+  EXPECT_TRUE(f7.clock.overDrive);
+  EXPECT_EQ(f7.fpu, "fpv5-sp-d16");
+  EXPECT_FALSE(f7.console.usartV1);
+  EXPECT_EQ(f7.console.clockHz, 108000000);
+  auto nucleo = resolver.resolve("STM32F7", "NucleoF767ZI", &error);
+  ASSERT_TRUE(nucleo.has_value()) << error;
+  strd::Stm32Board n;
+  ASSERT_TRUE(strd::resolveStm32Board(*nucleo, n, error)) << error;
+  EXPECT_EQ(n.fpu, "fpv5-d16");
+  EXPECT_EQ(n.console.base, 0x40004800);
+  EXPECT_EQ(n.console.tx.portBase, 0x40020C00);
+  auto saturn = resolver.resolve("STM32F7", "SaturnM7", &error);
+  ASSERT_TRUE(saturn.has_value()) << error;
+  strd::Stm32Board s;
+  ASSERT_TRUE(strd::resolveStm32Board(*saturn, s, error)) << error;
+  EXPECT_FALSE(s.console.present);
+
+  // A crystal: 8 MHz / 8 * 336 / 2.
+  strd::Stm32Board crystal;
+  ASSERT_TRUE(resolve("CrystalF4", crystal, error)) << error;
+  EXPECT_TRUE(crystal.clock.hse);
+  EXPECT_EQ(crystal.clock.sourceHz, 8000000);
+  EXPECT_EQ(crystal.clock.hclkHz, 168000000);
+
+  // A slower AHB is fine once `clock` says so.
+  strd::Stm32Board half;
+  ASSERT_TRUE(resolve("HalfAhbClock", half, error)) << error;
+  EXPECT_EQ(half.clock.flashLatency, 2);
+
+  // What the hardware can't do is an error naming the board and the limit.
+  strd::Stm32Board bad;
+  EXPECT_FALSE(resolve("FastF4", bad, error));
+  EXPECT_NE(error.find("FastF4: SYSCLK is 200 MHz"), std::string::npos) << error;
+  EXPECT_FALSE(resolve("SlowApb", bad, error));
+  EXPECT_NE(error.find("the APB1 clock is 84 MHz"), std::string::npos) << error;
+  EXPECT_FALSE(resolve("HalfAhb", bad, error));
+  EXPECT_NE(error.find("set clock: 84000000"), std::string::npos) << error;
+  EXPECT_FALSE(resolve("NoSuchUart", bad, error));
+  EXPECT_NE(error.find("USART9 is not in the device's peripherals"),
+            std::string::npos)
+      << error;
+
+  std::filesystem::remove_all(dir, ec);
 }
