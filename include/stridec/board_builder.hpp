@@ -116,6 +116,24 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
                               std::ostream &out = std::cout,
                               std::ostream &err = std::cerr);
 
+// The runner `stride flash` uses: --upload-method, else with --probe the
+// first `flashers` entry that uses a debug probe, else the board's
+// `defaultFlasher` (or its first entry). Runner names: openocd, probe-rs,
+// picotool, avrdude, arduino-cli, none. Empty when the board has none.
+std::string resolveFlashMethod(const ResolvedHardware &hw,
+                               const BoardBuildOptions &opts);
+
+// Flashes an ELF over SWD with the board's `openocd OpenOCD` flasher
+// (interface, target or boardScript, transport, speed, verify, reset). Finds
+// OpenOCD, or downloads it from the entry's `download`. The only OpenOCD
+// flash path: uploadFirmwareWithRunner calls it too.
+bool flashWithOpenOcd(const ResolvedHardware &hw,
+                      const std::filesystem::path &elfPath,
+                      const BoardBuildOptions &opts,
+                      const std::string &strideRoot,
+                      std::ostream &out = std::cout,
+                      std::ostream &err = std::cerr);
+
 // Builds a desktop/JIT target (emits object + C header + .target.json).
 bool buildDesktopTarget(const BoardBuildOptions &opts,
                         std::ostream &out = std::cout,

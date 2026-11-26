@@ -573,98 +573,64 @@ std::vector<SerialDeviceInfo> enumerateSerialDevices() {
   return devices;
 }
 
-static std::shared_ptr<DeclarationNode>
-uploadMethodBlock(const ResolvedHardware &hw, const std::string &methodBlock) {
-  auto node = hw.recordValue("upload", methodBlock);
-  if (node && node->getNodeType() == AST::Declaration) {
-    return std::static_pointer_cast<DeclarationNode>(node);
+namespace {
+
+// The flasher kinds stridec can run (package Flasher in strideroot), with
+// the runner name `--upload-method` and target.json's flash.runner use, and
+// whether the tool reaches the chip through a debug probe (`--probe`).
+struct FlasherKind {
+  const char *kind;
+  const char *runner;
+  bool probe;
+};
+constexpr FlasherKind kFlasherKinds[] = {
+    {"openocd", "openocd", true},       {"probeRs", "probe-rs", true},
+    {"picotool", "picotool", false},    {"avrdude", "avrdude", false},
+    {"arduinoCli", "arduino-cli", false},
+};
+
+const FlasherKind *flasherKind(const std::string &kindOrRunner) {
+  for (const auto &k : kFlasherKinds) {
+    if (kindOrRunner == k.kind || kindOrRunner == k.runner) {
+      return &k;
+    }
   }
   return nullptr;
 }
 
-static std::string uploadMethodString(const ResolvedHardware &hw,
-                                      const std::string &methodBlock,
-                                      const std::string &key,
-                                      const std::string &flatFallbackKey,
-                                      const std::string &defaultValue = "") {
-  if (auto sub = uploadMethodBlock(hw, methodBlock)) {
-    if (auto val = sub->getPropertyValue(key)) {
-      std::string text = ASTQuery::valueText(val);
-      if (!text.empty()) {
-        return text;
-      }
-    }
-  }
-  std::string direct = hw.recordString("upload", key, "");
-  if (!direct.empty()) {
-    return direct;
-  }
-  if (!flatFallbackKey.empty()) {
-    std::string alt = hw.recordString("upload", flatFallbackKey, "");
-    if (!alt.empty()) {
-      return alt;
-    }
-  }
-  return defaultValue;
+// The board's entry for a tool, or an empty one whose options all read as
+// their defaults.
+Flasher flasherOf(const ResolvedHardware &hw, const std::string &kind) {
+  return hw.flasher(kind).value_or(Flasher{});
 }
 
-static std::optional<int64_t>
-uploadMethodInt(const ResolvedHardware &hw, const std::string &methodBlock,
-                const std::string &key, const std::string &flatFallbackKey) {
-  auto parseInt = [](const ASTNode &val) -> std::optional<int64_t> {
-    if (!val) {
-      return std::nullopt;
-    }
-    if (val->getNodeType() == AST::Int) {
-      return std::static_pointer_cast<ValueNode>(val)->getIntValue();
-    }
-    return std::nullopt;
-  };
-  if (auto sub = uploadMethodBlock(hw, methodBlock)) {
-    if (auto val = parseInt(sub->getPropertyValue(key))) {
-      return val;
-    }
-  }
-  if (auto val = hw.recordInt("upload", key)) {
-    return val;
-  }
-  if (!flatFallbackKey.empty()) {
-    if (auto val = hw.recordInt("upload", flatFallbackKey)) {
-      return val;
-    }
-  }
-  return std::nullopt;
-}
+} // namespace
 
-static std::string resolveUploadMethod(const ResolvedHardware &hw,
-                                       const BoardBuildOptions &opts) {
+std::string resolveFlashMethod(const ResolvedHardware &hw,
+                               const BoardBuildOptions &opts) {
   if (!opts.uploadMethod.empty()) {
-    std::string explicitMethod = toLowerCopy(opts.uploadMethod);
+    const std::string explicitMethod = toLowerCopy(opts.uploadMethod);
     if (explicitMethod == "swd") {
       return "openocd";
+    }
+    if (const auto *k = flasherKind(opts.uploadMethod)) {
+      return k->runner;
     }
     return explicitMethod;
   }
   if (opts.useProbe) {
-    std::string probeMethod = hw.recordString("upload", "probe", "");
-    if (!probeMethod.empty()) {
-      return toLowerCopy(probeMethod);
-    }
-    if (uploadMethodBlock(hw, "openocd") ||
-        !hw.recordString("upload", "openocdInterface", "").empty() ||
-        !hw.recordString("upload", "interface", "").empty()) {
-      return "openocd";
-    }
-    if (uploadMethodBlock(hw, "probeRs")) {
-      return "probe-rs";
+    for (const auto &f : hw.flashers()) {
+      if (const auto *k = flasherKind(f.kind); k && k->probe) {
+        return k->runner;
+      }
     }
     return "openocd";
   }
-  std::string def = hw.recordString("upload", "method", "");
-  if (def.empty()) {
-    def = hw.recordString("upload", "default", "avrdude");
+  if (auto f = hw.defaultFlasher()) {
+    const auto *k = flasherKind(f->kind);
+    return k ? k->runner : f->kind;
   }
-  return toLowerCopy(def);
+  return "";
 }
 
 bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
@@ -676,11 +642,17 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
   const std::string strideRoot =
       opts.strideRoot.empty() ? ASTFunctions::getDefaultStrideRoot()
                               : opts.strideRoot;
-  const std::string method = resolveUploadMethod(hw, opts);
+  const std::string method = resolveFlashMethod(hw, opts);
 
   if (method == "none") {
     out << "Upload method is 'none'; skipping upload for " << hw.name() << "\n";
     return true;
+  }
+  if (method.empty()) {
+    err << "stride: error: '" << hw.name()
+        << "' declares no flashers; add a `flashers` entry (package Flasher) "
+           "or pass --upload-method\n";
+    return false;
   }
 
   auto resolvePort = [&](std::string &outPort) -> bool {
@@ -708,9 +680,9 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       return false;
     }
     const std::string programmer =
-        uploadMethodString(hw, "avrdude", "programmer", "", "arduino");
+        flasherOf(hw, "avrdude").string("programmer", "arduino");
     const int64_t baud =
-        uploadMethodInt(hw, "avrdude", "baud", "").value_or(115200);
+        flasherOf(hw, "avrdude").integer("baud").value_or(115200);
 
     std::vector<std::string> uploadArgs;
     std::filesystem::path confPath =
@@ -753,7 +725,7 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       return false;
     }
     const std::string fqbn =
-        uploadMethodString(hw, "arduinoCli", "fqbn", "", "");
+        flasherOf(hw, "arduinoCli").string("fqbn");
     std::vector<std::string> uploadArgs = {"upload", "-p", port, "--input-file",
                                            hexPath.string()};
     if (!fqbn.empty()) {
@@ -770,58 +742,7 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
   }
 
   if (method == "openocd") {
-    const std::string openocd =
-        findRunnerTool("openocd", "OpenOCD", strideRoot);
-    if (openocd.empty()) {
-      err << "stride: error: openocd not found in PATH or ToolManager\n";
-      return false;
-    }
-    std::vector<std::string> uploadArgs;
-    const std::string boardCfg =
-        uploadMethodString(hw, "openocd", "boardCfg", "openocdBoard", "");
-    const std::string iface =
-        !opts.probeInterface.empty()
-            ? opts.probeInterface
-            : uploadMethodString(hw, "openocd", "interface",
-                                 "openocdInterface", "");
-    const std::string target =
-        uploadMethodString(hw, "openocd", "target", "openocdTarget", "");
-    const std::string transport =
-        uploadMethodString(hw, "openocd", "transport", "openocdTransport", "");
-    const std::optional<int64_t> speed =
-        uploadMethodInt(hw, "openocd", "speed", "openocdSpeed");
-
-    if (!boardCfg.empty() && opts.probeInterface.empty()) {
-      uploadArgs.push_back("-f");
-      uploadArgs.push_back(boardCfg);
-    } else {
-      if (!iface.empty()) {
-        uploadArgs.push_back("-f");
-        uploadArgs.push_back(iface);
-      }
-      if (!transport.empty()) {
-        uploadArgs.push_back("-c");
-        uploadArgs.push_back("transport select " + transport);
-      }
-      if (!target.empty()) {
-        uploadArgs.push_back("-f");
-        uploadArgs.push_back(target);
-      }
-    }
-    if (speed.has_value()) {
-      uploadArgs.push_back("-c");
-      uploadArgs.push_back("adapter speed " + std::to_string(*speed));
-    }
-    uploadArgs.push_back("-c");
-    uploadArgs.push_back("program " + elfPath.generic_string() +
-                         " verify reset exit");
-    if (runRunnerSubprocess(openocd, uploadArgs, opts.verbose, out) != 0) {
-      err << "stride: error: openocd upload failed\n";
-      return false;
-    }
-    out << "Uploaded " << elfPath.string() << " to " << hw.name()
-        << " via openocd\n";
-    return true;
+    return flashWithOpenOcd(hw, elfPath, opts, strideRoot, out, err);
   }
 
   if (method == "probe-rs") {
@@ -832,7 +753,7 @@ bool uploadFirmwareWithRunner(const ResolvedHardware &hw,
       return false;
     }
     const std::string chip =
-        uploadMethodString(hw, "probeRs", "chip", "", cpu);
+        flasherOf(hw, "probeRs").string("chip", cpu);
     std::vector<std::string> uploadArgs = {"download", "--chip", chip,
                                            elfPath.string()};
     if (runRunnerSubprocess(probeRs, uploadArgs, opts.verbose, out) != 0) {
@@ -918,9 +839,9 @@ bool inspectTargetDescriptor(const BoardBuildOptions &opts,
     outDesc.cpu = hw->stringProperty("cpu");
     outDesc.artifact = elfPath.generic_string();
     outDesc.hex = hexPath.generic_string();
-    outDesc.flashRunner = resolveUploadMethod(*hw, opts);
+    outDesc.flashRunner = resolveFlashMethod(*hw, opts);
     outDesc.baud =
-        uploadMethodInt(*hw, "avrdude", "baud", "").value_or(115200);
+        flasherOf(*hw, "avrdude").integer("baud").value_or(115200);
     if (!opts.serialPort.empty()) {
       outDesc.port = opts.serialPort;
     } else {
@@ -930,7 +851,7 @@ bool inspectTargetDescriptor(const BoardBuildOptions &opts,
     outDesc.monitorType =
         (outDesc.flashRunner == "probe-rs") ? "rtt" : "serial";
     outDesc.chip =
-        uploadMethodString(*hw, "probeRs", "chip", "", outDesc.cpu);
+        flasherOf(*hw, "probeRs").string("chip", outDesc.cpu);
     outDesc.svd = hw->recordString("debug", "svd", "");
     std::string explicitAdapter = hw->recordString("debug", "adapter", "");
     if (!explicitAdapter.empty()) {
