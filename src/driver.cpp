@@ -313,7 +313,9 @@ std::vector<ArduinoTarget> getSupportedArduinoTargets(const std::string &arch) {
     targets.push_back({"cortex-m0plus", "thumbv6m-none-eabi", "cortex-m0plus", "", "cortex-m0plus"});
     targets.push_back({"cortex-m3", "thumbv7m-none-eabi", "cortex-m3", "", "cortex-m3"});
     targets.push_back({"cortex-m4", "thumbv7em-none-eabi", "cortex-m4", "", "cortex-m4"});
-    targets.push_back({"cortex-m7", "thumbv7em-none-eabihf", "cortex-m7", "+vfp4", "cortex-m7"});
+    // eabi (softfp), as Arduino's mbed cores (Portenta H7) compile: before
+    // triples were normalized, "eabihf" here produced softfp code anyway.
+    targets.push_back({"cortex-m7", "thumbv7em-none-eabi", "cortex-m7", "+vfp4", "cortex-m7"});
     targets.push_back({"cortex-m33", "thumbv8m.main-none-eabi", "cortex-m33", "", "cortex-m33"});
   }
   return targets;

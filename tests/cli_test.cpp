@@ -977,7 +977,7 @@ TEST_F(StridecDriverTest, STM32F4DiscoveryTargetAndCompile) {
   std::string errMsg;
   auto f4 = resolver.resolve("STM32F4", "STM32F4Discovery", &errMsg);
   ASSERT_TRUE(f4.has_value()) << errMsg;
-  EXPECT_EQ(f4->stringProperty("triple"), "thumbv7em-none-eabi");
+  EXPECT_EQ(f4->stringProperty("triple"), "thumbv7em-none-eabihf");
   EXPECT_EQ(f4->stringProperty("cpu"), "cortex-m4");
   EXPECT_EQ(f4->intProperty("clock").value_or(0), 168000000);
   EXPECT_EQ(f4->recordInt("memory", "flash").value_or(0), 1048576);
@@ -1043,7 +1043,7 @@ TEST_F(StridecDriverTest, STM32F4DiscoveryTargetAndCompile) {
   EXPECT_EQ(desc.system, "STM32F4");
   EXPECT_EQ(desc.board, "F4Rig");
   EXPECT_EQ(desc.framework, "STM32");
-  EXPECT_EQ(desc.triple, "thumbv7em-none-eabi");
+  EXPECT_EQ(desc.triple, "thumbv7em-none-eabihf");
   EXPECT_EQ(desc.cpu, "cortex-m4");
   EXPECT_EQ(desc.flashRunner, "openocd");
   EXPECT_EQ(desc.debugAdapter, "cortex-debug");
